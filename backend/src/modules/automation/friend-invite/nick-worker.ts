@@ -25,6 +25,70 @@ import { nickWorkerLockKey } from './fnv1a.js';
 import { claimNextEntry, markEntrySent, releaseEntryFailed } from './pool-query.js';
 import { logEvent } from './event-log-service.js';
 import { checkMultiNickThreshold } from '../queues/worker-guards.js';
+import { getBullMQRedis } from '../queues/redis-connection.js';
+
+// ── Phase 2 idempotency sentinel ─────────────────────────────────────────
+// Stuck sweeper P1 (2026-06-02): worker crash BETWEEN Phase 2 sendFriendRequest
+// success và Phase 3 markEntrySent → entry quay pool (sweeper revive sau 5 phút)
+// → nick khác (hoặc cùng nick) claim → resend → KH nhận 2 lời mời.
+//
+// Fix: trước khi gọi sendFriendRequest, ghi sentinel Redis key chứa leadgenId.
+// Lần sau retry, nếu sentinel còn fresh (<5 phút), skip send + reuse leadgenId
+// để jump thẳng Phase 3. Sentinel TTL 1 ngày để guarantee không bao giờ resend
+// trong cùng ngày dù worker restart nhiều lần.
+//
+// Key shape: fi:sent:<entryId>:<nickId>
+// Value shape: JSON { sentAt: epochMs, leadgenId: string }
+// TTL: 86400s (1 ngày)
+// Freshness window: 5 phút — match stuck sweeper threshold. Quá window này thì
+// coi như Zalo backend có thể đã expire request, được phép retry (Zalo idempotency
+// bên họ tự enforce qua mã 222 "already friend").
+const PHASE2_SENTINEL_TTL_SEC = 86_400;
+const PHASE2_SENTINEL_FRESH_MS = 5 * 60_000;
+
+function phase2SentinelKey(entryId: string, nickId: string): string {
+  return `fi:sent:${entryId}:${nickId}`;
+}
+
+interface Phase2Sentinel {
+  sentAt: number;
+  leadgenId: string;
+}
+
+async function readPhase2Sentinel(
+  entryId: string,
+  nickId: string,
+): Promise<Phase2Sentinel | null> {
+  try {
+    const raw = await getBullMQRedis().get(phase2SentinelKey(entryId, nickId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Phase2Sentinel;
+    if (typeof parsed?.sentAt !== 'number') return null;
+    return parsed;
+  } catch (err) {
+    logger.warn(`[nick-worker] readPhase2Sentinel failed entry=${entryId} nick=${nickId}:`, err);
+    return null;
+  }
+}
+
+async function writePhase2Sentinel(
+  entryId: string,
+  nickId: string,
+  payload: Phase2Sentinel,
+): Promise<void> {
+  try {
+    await getBullMQRedis().set(
+      phase2SentinelKey(entryId, nickId),
+      JSON.stringify(payload),
+      'EX',
+      PHASE2_SENTINEL_TTL_SEC,
+    );
+  } catch (err) {
+    // Redis down → log but DON'T block send. Falling back to "no idempotency"
+    // is strictly worse than ngày-nay behaviour, không tệ hơn.
+    logger.warn(`[nick-worker] writePhase2Sentinel failed entry=${entryId} nick=${nickId}:`, err);
+  }
+}
 
 // Test mode: 1 phút cố định (anh chốt cho test loop)
 // Prod mode: 20-40 phút random (anh chốt design)
@@ -410,11 +474,42 @@ async function runTick(nickId: string): Promise<void> {
         .replaceAll('{name}', zaloName)
         .replaceAll('{sale}', saleName);
 
-      // 2.3: Send friend request
-      const sendResult = await zaloOps.sendFriendRequest(nickId, greeting, resolvedUid);
-      // sendResult format từ zca-js — pick leadgen id if available
-      const sr = sendResult as Record<string, unknown> | undefined;
-      zaloLeadgenId = String(sr?.reqId ?? sr?.requestId ?? sr?.id ?? '');
+      // 2.3: Send friend request — guarded by Redis sentinel for crash idempotency.
+      // Pre-check: nếu trước đó tick này đã send success NHƯNG worker crash trước
+      // Phase 3 (DB write) → entry quay pool qua stuck sweeper → tick này pick lại.
+      // Sentinel cho biết "đã gửi rồi, đừng gửi nữa" trong window 5 phút.
+      const existingSentinel = await readPhase2Sentinel(entry.id, nickId);
+      const sentinelAgeMs = existingSentinel ? Date.now() - existingSentinel.sentAt : Infinity;
+      if (existingSentinel && sentinelAgeMs < PHASE2_SENTINEL_FRESH_MS) {
+        logger.warn(
+          `[nick-worker] ${nickId} entry=${entry.id} Phase2 sentinel hit (age=${Math.round(sentinelAgeMs / 1000)}s leadgen=${existingSentinel.leadgenId}) — skip resend, replay Phase 3`,
+        );
+        zaloLeadgenId = existingSentinel.leadgenId || '';
+        // Phase 3 path tiếp tục dùng zaloLeadgenId này — KHÔNG gọi sendFriendRequest.
+      } else {
+        if (existingSentinel) {
+          logger.info(
+            `[nick-worker] ${nickId} entry=${entry.id} Phase2 sentinel stale (age=${Math.round(sentinelAgeMs / 1000)}s > ${PHASE2_SENTINEL_FRESH_MS / 1000}s) — retry send`,
+          );
+        }
+        // Pre-write sentinel với leadgenId rỗng để cover edge case:
+        // process crash BETWEEN `sendFriendRequest` resolve và sentinel write.
+        // Nếu key này tồn tại lúc retry, ít nhất ta biết "đã thử send" → skip
+        // (lựa chọn an toàn theo hướng under-send hơn over-send).
+        await writePhase2Sentinel(entry.id, nickId, { sentAt: Date.now(), leadgenId: '' });
+
+        const sendResult = await zaloOps.sendFriendRequest(nickId, greeting, resolvedUid);
+        // sendResult format từ zca-js — pick leadgen id if available
+        const sr = sendResult as Record<string, unknown> | undefined;
+        zaloLeadgenId = String(sr?.reqId ?? sr?.requestId ?? sr?.id ?? '');
+
+        // Update sentinel với leadgenId thực tế (giữ nguyên sentAt từ pre-write,
+        // không lùi clock — fairness với sweeper 5 phút).
+        await writePhase2Sentinel(entry.id, nickId, {
+          sentAt: existingSentinel?.sentAt ?? Date.now(),
+          leadgenId: zaloLeadgenId,
+        });
+      }
 
       // Persist Zalo enrichment on entry (for later UI)
       await prisma.customerListEntry.update({
