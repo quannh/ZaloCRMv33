@@ -100,12 +100,12 @@
       <!-- ============ TAB 1: DASHBOARD ============================ -->
       <!-- =========================================================== -->
       <div v-show="currentTab === 'dashboard'" class="tab-panel">
-        <!-- ============ MONITOR LIVE FEED ============ -->
+        <!-- ============ MONITOR LIVE FEED — Option B (bảng 6 cột 1 dòng) ============ -->
         <div class="monitor">
           <div class="monitor-head">
             <h3>
-              📺 Monitor sự kiện trực tiếp
-              <span class="head-hint-inline">(20 mới nhất)</span>
+              📺 Theo dõi trực tiếp
+              <span class="head-hint-inline">20 sự kiện mới nhất · tự làm mới mỗi 5 giây · Giờ VN (UTC+7)</span>
             </h3>
             <div class="monitor-head-actions">
               <span class="live-chip" :class="{ paused: monitorPaused }">
@@ -117,28 +117,51 @@
               </button>
             </div>
           </div>
-          <div ref="monitorBodyRef" class="monitor-body" @scroll="onMonitorScroll">
-            <div
-              v-for="ev in monitorEvents"
-              :key="ev.id"
-              class="mon-row"
-              :class="[ev.tone ? `t-${ev.tone}` : '', { 'is-new': ev.isNew }]"
-            >
-              <span class="mon-icon">{{ ev.icon }}</span>
-              <span class="mon-time">{{ ev.timeLabel }}</span>
-              <span class="mon-text">
-                <!-- Fix #3b (2026-06-02) — Anh yêu cầu show rõ KH nào + nick nào làm gì -->
-                <strong v-if="ev.rowIndex != null" class="mon-row-idx">#{{ ev.rowIndex }}</strong>
-                {{ ev.text }}
-                <span v-if="ev.customerName || ev.nickName" class="mon-meta">
-                  — {{ ev.customerName || 'KH' }}
-                  <span v-if="ev.nickName" class="mon-nick">↔ nick {{ ev.nickName }}</span>
-                </span>
-              </span>
-            </div>
-            <div v-if="monitorEvents.length === 0" class="mon-empty">
-              Chưa có sự kiện nào — feed sẽ xuất hiện ở đây khi worker chạy.
-            </div>
+          <div ref="monitorBodyRef" class="ev-table-wrap mon-table-wrap" @scroll="onMonitorScroll">
+            <table class="ev-table mon-table">
+              <thead>
+                <tr>
+                  <th class="col-time">⏱ Giờ VN</th>
+                  <th class="col-phase">Loại sự kiện</th>
+                  <th class="col-kh">👤 Khách hàng</th>
+                  <th class="col-nick">📱 Nick chăm</th>
+                  <th class="col-status">Trạng thái</th>
+                  <th class="col-ago">Cách đây</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="ev in monitorEvents"
+                  :key="ev.id"
+                  :class="[{ 'is-new': ev.isNew }]"
+                >
+                  <td class="col-time">{{ ev.timeLabel }}</td>
+                  <td class="col-phase">
+                    <span class="phase-pill" :class="'phase-' + phaseTone(ev.type)">
+                      <span class="phase-ico">{{ ev.icon }}</span>
+                      {{ phaseLabel(ev.type) }}
+                    </span>
+                  </td>
+                  <td class="col-kh">
+                    <span v-if="ev.rowIndex != null" class="row-idx">#{{ ev.rowIndex }}</span>
+                    <span class="kh-name">{{ ev.customerName || '—' }}</span>
+                  </td>
+                  <td class="col-nick">
+                    <span class="nick-dot" :class="nickDotClass(ev.nickName)"></span>
+                    <span class="nick-name">{{ ev.nickName || '—' }}</span>
+                  </td>
+                  <td class="col-status">
+                    <span class="tone-chip" :class="'tone-' + (ev.tone || 'info')" v-html="ev.text"></span>
+                  </td>
+                  <td class="col-ago">{{ shortAgo(ev.at) }}</td>
+                </tr>
+                <tr v-if="monitorEvents.length === 0">
+                  <td colspan="6" class="ev-empty-row">
+                    Chưa có sự kiện nào — feed sẽ xuất hiện ở đây khi worker chạy.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -645,87 +668,174 @@
         <div class="section section-mt">
           <div class="log-head">
             <h3>
-              📋 Log sự kiện đầy đủ
-              <span class="head-hint-inline">(lưu 90 ngày)</span>
+              📜 Lịch sử đầy đủ
+              <span class="head-hint-inline">
+                {{ formatNum(logTotal) }} sự kiện · lưu 90 ngày · Giờ VN (UTC+7)
+              </span>
             </h3>
-            <button class="btn btn-sm" @click="exportCsv">📥 Xuất CSV</button>
+            <div class="log-head-actions">
+              <button class="btn btn-sm" @click="exportCsv">📥 Xuất Excel</button>
+            </div>
           </div>
 
-          <div class="log-toolbar">
-            <div class="chips log-type-chips">
-              <span
-                v-for="chip in logTypeChips"
-                :key="chip.key"
-                class="chip"
-                :class="{ active: logFilter.type === chip.key }"
-                @click="logFilter.type = chip.key"
-              >
-                {{ chip.label }} <span class="count">{{ formatNum(chip.count) }}</span>
-              </span>
+          <!-- Filter bar — 2 hàng -->
+          <div class="filter-bar">
+            <!-- Row 1: range, search, KH select, Nick select, reset -->
+            <div class="filter-row">
+              <span class="filter-label">Khoảng</span>
+              <div class="range-btns">
+                <button
+                  v-for="r in RANGE_OPTIONS"
+                  :key="r.key"
+                  class="range-btn"
+                  :class="{ active: logRange === r.key }"
+                  @click="setLogRange(r.key)"
+                >
+                  {{ r.label }}
+                </button>
+              </div>
+              <input
+                v-show="logRange === 'custom'"
+                v-model="logFilter.from"
+                type="date"
+                class="filter-input filter-input-date"
+              />
+              <input
+                v-show="logRange === 'custom'"
+                v-model="logFilter.to"
+                type="date"
+                class="filter-input filter-input-date"
+              />
+
+              <input
+                v-model="logFilter.q"
+                type="text"
+                class="filter-input filter-input-search"
+                placeholder="🔍 Tìm tên KH, SĐT, nick, mã tin nhắn…"
+              />
+
+              <select v-model="logFilter.khId" class="filter-select">
+                <option value="">👤 Tất cả khách hàng</option>
+                <option v-for="kh in distinctKhInLog" :key="kh.id" :value="kh.id">
+                  {{ kh.name }}
+                </option>
+              </select>
+
+              <select v-model="logFilter.nickId" class="filter-select">
+                <option value="">📱 Tất cả nick</option>
+                <option v-for="n in distinctNicksInLog" :key="n.id" :value="n.id">
+                  {{ n.name }}
+                </option>
+              </select>
+
+              <span class="filter-spacer"></span>
+              <button class="filter-reset" @click="resetLogFilter">↺ Đặt lại lọc</button>
             </div>
 
-            <span class="date-range">
-              Từ
-              <input v-model="logFilter.from" type="date" />
-              đến
-              <input v-model="logFilter.to" type="date" />
-            </span>
-
-            <input
-              v-model="logFilter.q"
-              type="text"
-              placeholder="🔍 Tìm theo tên khách hoặc số ĐT..."
-            />
+            <!-- Row 2: 10 chip type -->
+            <div class="filter-row filter-row-chips">
+              <span class="filter-label">Loại</span>
+              <div class="chips log-type-chips">
+                <span
+                  v-for="chip in logTypeChips"
+                  :key="chip.key"
+                  class="chip"
+                  :class="{ active: logFilter.type === chip.key }"
+                  @click="logFilter.type = chip.key"
+                >
+                  {{ chip.label }} <span class="count">{{ formatNum(chip.count) }}</span>
+                </span>
+              </div>
+            </div>
           </div>
 
-          <table class="log-table">
-            <thead>
-              <tr>
-                <th class="col-time">Thời gian <span class="sort-arrow">↓</span></th>
-                <th class="col-type">Loại</th>
-                <th class="col-nick">Nick</th>
-                <th class="col-kh">Khách hàng</th>
-                <th class="col-row">Row #</th>
-                <th class="col-target">Mục tiêu</th>
-                <th class="col-status">Trạng thái</th>
-                <th class="col-detail">Chi tiết</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="ev in logEvents" :key="ev.id">
-                <td class="col-time">{{ formatLogTime(ev.at) }}</td>
-                <td>
-                  <span class="type-pill" :class="typePillClass(ev.type)">
-                    {{ typePillLabel(ev.type) }}
-                  </span>
-                </td>
-                <td>{{ ev.nickName ?? '—' }}</td>
-                <td>{{ ev.customerName ?? '—' }}</td>
-                <td>{{ ev.rowIndex ? `#${ev.rowIndex}` : '—' }}</td>
-                <td>{{ data.trigger.name }}</td>
-                <td>
-                  <span class="estatus" :class="logStatusClass(ev)">
-                    {{ logStatusLabel(ev) }}
-                  </span>
-                </td>
-                <td class="col-detail">{{ ev.detail ?? '—' }}</td>
-              </tr>
-              <tr v-if="logEvents.length === 0 && !logLoading">
-                <td colspan="8" class="empty-row">
-                  Chưa có sự kiện nào trong khoảng lọc
-                </td>
-              </tr>
-              <tr v-if="logLoading">
-                <td colspan="8" class="empty-row">Đang tải sự kiện...</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="ev-table-wrap">
+            <table class="ev-table log-table">
+              <thead>
+                <tr>
+                  <th class="col-check">
+                    <input
+                      type="checkbox"
+                      :checked="selectAllLog"
+                      @change="toggleSelectAllLog"
+                    />
+                  </th>
+                  <th class="col-time">⏱ Thời gian</th>
+                  <th class="col-phase">Loại sự kiện</th>
+                  <th class="col-kh">👤 Khách hàng</th>
+                  <th class="col-nick">📱 Nick</th>
+                  <th class="col-status">Trạng thái</th>
+                  <th class="col-detail">📝 Chi tiết</th>
+                  <th class="col-action">⚙</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="ev in logEvents"
+                  :key="ev.id"
+                  :class="{ selected: selectedLogIds.includes(ev.id) }"
+                >
+                  <td class="col-check">
+                    <input
+                      type="checkbox"
+                      :checked="selectedLogIds.includes(ev.id)"
+                      @change="toggleLogRow(ev.id)"
+                    />
+                  </td>
+                  <td class="col-time">
+                    <div class="time-main">{{ formatLogTime(ev.at) }}</div>
+                    <div class="time-rel">{{ shortAgo(ev.at) }}</div>
+                  </td>
+                  <td class="col-phase">
+                    <span class="phase-pill" :class="'phase-' + phaseTone(ev.type)">
+                      <span class="phase-ico">{{ phaseIcon(ev.type) }}</span>
+                      {{ phaseLabel(ev.type) }}
+                    </span>
+                  </td>
+                  <td class="col-kh">
+                    <span v-if="ev.rowIndex != null" class="row-idx">#{{ ev.rowIndex }}</span>
+                    <span class="kh-name">{{ ev.customerName || '—' }}</span>
+                  </td>
+                  <td class="col-nick">
+                    <span class="nick-dot" :class="nickDotClass(ev.nickName)"></span>
+                    <span class="nick-name">{{ ev.nickName || '—' }}</span>
+                  </td>
+                  <td class="col-status">
+                    <span class="estatus" :class="logStatusClass(ev)">
+                      {{ logStatusLabel(ev) }}
+                    </span>
+                  </td>
+                  <td class="col-detail">
+                    <span class="detail-text">{{ ev.detail || '—' }}</span>
+                  </td>
+                  <td class="col-action">
+                    <button
+                      class="icon-btn"
+                      title="Mở hồ sơ KH / chat"
+                      @click="jumpToConv(ev)"
+                    >
+                      🔗
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="logEvents.length === 0 && !logLoading">
+                  <td colspan="8" class="ev-empty-row">
+                    Chưa có sự kiện nào trong khoảng lọc
+                  </td>
+                </tr>
+                <tr v-if="logLoading">
+                  <td colspan="8" class="ev-empty-row">Đang tải sự kiện...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
           <div class="pagination">
             <div>
               Hiển thị
               <strong>{{ logEvents.length === 0 ? 0 : (logPage - 1) * LOG_PAGE_SIZE + 1 }}-{{ Math.min(logPage * LOG_PAGE_SIZE, logTotal) }}</strong>
               trong <strong>{{ formatNum(logTotal) }}</strong> sự kiện
+              · {{ LOG_PAGE_SIZE }}/trang
             </div>
             <div class="page-nav">
               <button class="page-btn" :disabled="logPage === 1" @click="logPage--; loadLog()">‹</button>
@@ -739,6 +849,17 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Bulk action bar — sticky bottom khi có row chọn -->
+        <div v-if="selectedLogIds.length > 0" class="bulk-bar">
+          <span class="count-pill">{{ selectedLogIds.length }} đã chọn</span>
+          <span class="bulk-label">Hành động hàng loạt:</span>
+          <button class="bulk-btn" @click="exportSelected">📥 Xuất Excel</button>
+          <button class="bulk-btn" @click="markReviewed">✅ Đánh dấu đã xem</button>
+          <button class="bulk-btn" @click="copySelectedIds">📋 Sao chép</button>
+          <span class="filter-spacer"></span>
+          <button class="bulk-btn bulk-btn-ghost" @click="selectedLogIds = []">Bỏ chọn</button>
         </div>
       </div>
 
@@ -927,12 +1048,35 @@ const logEvents = ref<LogEvent[]>([]);
 const logTotal = ref(0);
 const logPage = ref(1);
 const logLoading = ref(false);
-const logFilter = ref<{ type: string; from: string; to: string; q: string }>({
+const logFilter = ref<{
+  type: string;
+  from: string;
+  to: string;
+  q: string;
+  khId: string;
+  nickId: string;
+}>({
   type: 'all',
-  from: todayIso(),
+  from: isoNDaysAgo(7),
   to: todayIso(),
   q: '',
+  khId: '',
+  nickId: '',
 });
+
+// Option B 2026-06-03 — range preset chips (24h / 7 ngày / 30 ngày / Tất cả / Tự chọn).
+type LogRangeKey = '24h' | '7d' | '30d' | 'all' | 'custom';
+const RANGE_OPTIONS: { key: LogRangeKey; label: string }[] = [
+  { key: '24h', label: '24h' },
+  { key: '7d', label: '7 ngày' },
+  { key: '30d', label: '30 ngày' },
+  { key: 'all', label: 'Tất cả' },
+  { key: 'custom', label: 'Tự chọn' },
+];
+const logRange = ref<LogRangeKey>('7d');
+
+// Bulk select 2026-06-03 — checkbox state Log table.
+const selectedLogIds = ref<string[]>([]);
 
 type EntryFilterKey =
   | 'all'
@@ -1148,20 +1292,51 @@ const entryChips = computed<{
   ];
 });
 
-// Log tab chips — counts derive từ logEvents page hiện tại (FE-only).
-// Khi BE /events trả facets.typeCounts thì swap sang facets (Option B follow-up).
+// Log tab chips — Option B (2026-06-03): 11 chip (Tất cả + 10 phase type).
+// Counts derive từ logEvents page hiện tại (FE-only). Khi BE /events trả
+// facets.typeCounts thì swap sang facets (follow-up).
 const logTypeChips = computed<{ key: string; label: string; count: number }[]>(() => {
   const all = logEvents.value;
   const countBy = (t: string) => all.filter((ev) => ev.type === t).length;
   return [
-    { key: 'all',                label: '📋 Tất cả',         count: all.length },
-    { key: 'friend_request',     label: '🤝 Gửi kết bạn',    count: countBy('friend_request') },
-    { key: 'welcome',            label: '💌 Tin chào mừng',  count: countBy('welcome') },
-    { key: 'follow_up',          label: '⏰ Bám đuổi',       count: countBy('follow_up') },
-    { key: 'customer_reply',     label: '🛑 Khách reply',    count: countBy('customer_reply') },
-    { key: 'customer_block',     label: '🚫 Khách block',    count: countBy('customer_block') },
-    { key: 'nick_disconnected',  label: '⏸ Nick ngắt',       count: countBy('nick_disconnected') },
+    { key: 'all',                label: 'Tất cả',            count: all.length },
+    { key: 'follow_up',          label: '✉ Bám đuổi',        count: countBy('follow_up') },
+    { key: 'welcome',            label: '👋 Welcome',         count: countBy('welcome') },
+    { key: 'friend_request',     label: '📤 Mời kết bạn',     count: countBy('friend_request') },
+    { key: 'friend_accepted',    label: '🤝 KH chấp nhận',    count: countBy('friend_accepted') },
+    { key: 'customer_reply',     label: '💬 KH trả lời',      count: countBy('customer_reply') },
+    { key: 'reaction_positive',  label: '❤ Reaction',         count: countBy('reaction_positive') + countBy('reaction_negative') },
+    { key: 'skipped',            label: '⏭ Bỏ qua',           count: countBy('skipped') },
+    { key: 'warning',            label: '⚠ Lỗi',              count: countBy('warning') },
+    { key: 'customer_block',     label: '🚫 Chặn',            count: countBy('customer_block') },
+    { key: 'converted_lead',     label: '⭐ Chuyển lead',     count: countBy('converted_lead') },
   ];
+});
+
+// Distinct KH + nick từ logEvents page hiện tại — dùng cho 2 dropdown filter.
+const distinctKhInLog = computed<{ id: string; name: string }[]>(() => {
+  const seen = new Map<string, string>();
+  for (const ev of logEvents.value) {
+    if (ev.customerName) {
+      // Dùng tên làm id tạm (BE chưa expose customerId trong LogEvent).
+      // Khi BE bổ sung sẽ swap sang ev.customerId.
+      if (!seen.has(ev.customerName)) seen.set(ev.customerName, ev.customerName);
+    }
+  }
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+});
+const distinctNicksInLog = computed<{ id: string; name: string }[]>(() => {
+  const seen = new Map<string, string>();
+  for (const ev of logEvents.value) {
+    if (ev.nickName && !seen.has(ev.nickName)) seen.set(ev.nickName, ev.nickName);
+  }
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+});
+
+// Bulk select helpers — selectAll = mọi row trên page hiện tại đều selected.
+const selectAllLog = computed<boolean>(() => {
+  if (logEvents.value.length === 0) return false;
+  return logEvents.value.every((ev) => selectedLogIds.value.includes(ev.id));
 });
 
 const filteredEntries = computed(() => {
@@ -1479,12 +1654,23 @@ async function loadLog(): Promise<void> {
         from: logFilter.value.from || undefined,
         to: logFilter.value.to || undefined,
         q: logFilter.value.q || undefined,
+        // Option B 2026-06-03 — 2 dropdown filter mới. BE chưa hỗ trợ thì sẽ ignore.
+        khId: logFilter.value.khId || undefined,
+        nickId: logFilter.value.nickId || undefined,
         limit: LOG_PAGE_SIZE,
         offset: (logPage.value - 1) * LOG_PAGE_SIZE,
       },
     });
-    logEvents.value = r.data?.events ?? [];
-    logTotal.value = r.data?.total ?? 0;
+    let events: LogEvent[] = r.data?.events ?? [];
+    // FE fallback filter khi BE chưa hỗ trợ khId / nickId (so theo customerName / nickName).
+    if (logFilter.value.khId) {
+      events = events.filter((ev) => ev.customerName === logFilter.value.khId);
+    }
+    if (logFilter.value.nickId) {
+      events = events.filter((ev) => ev.nickName === logFilter.value.nickId);
+    }
+    logEvents.value = events;
+    logTotal.value = r.data?.total ?? events.length;
   } catch (err) {
     // BE may not have /events endpoint yet — leave empty + log
     console.warn('[muc-tieu-detail] /events list chưa sẵn', err);
@@ -1496,12 +1682,91 @@ async function loadLog(): Promise<void> {
 }
 
 watch(
-  () => [logFilter.value.type, logFilter.value.from, logFilter.value.to, logFilter.value.q],
+  () => [
+    logFilter.value.type,
+    logFilter.value.from,
+    logFilter.value.to,
+    logFilter.value.q,
+    logFilter.value.khId,
+    logFilter.value.nickId,
+  ],
   () => {
     logPage.value = 1;
+    selectedLogIds.value = [];
     if (currentTab.value === 'log') void loadLog();
   },
 );
+
+// Option B (2026-06-03) — range preset → set from/to. 'custom' giữ nguyên 2 input date.
+function setLogRange(key: LogRangeKey): void {
+  logRange.value = key;
+  if (key === '24h') {
+    logFilter.value.from = todayIso();
+    logFilter.value.to = todayIso();
+  } else if (key === '7d') {
+    logFilter.value.from = isoNDaysAgo(7);
+    logFilter.value.to = todayIso();
+  } else if (key === '30d') {
+    logFilter.value.from = isoNDaysAgo(30);
+    logFilter.value.to = todayIso();
+  } else if (key === 'all') {
+    logFilter.value.from = '';
+    logFilter.value.to = '';
+  }
+  // custom — không đổi from/to, để user pick.
+}
+function resetLogFilter(): void {
+  logRange.value = '7d';
+  logFilter.value = {
+    type: 'all',
+    from: isoNDaysAgo(7),
+    to: todayIso(),
+    q: '',
+    khId: '',
+    nickId: '',
+  };
+  selectedLogIds.value = [];
+}
+
+function toggleSelectAllLog(): void {
+  if (selectAllLog.value) {
+    // Đang full-select page → bỏ chọn hết page
+    const pageIds = new Set(logEvents.value.map((ev) => ev.id));
+    selectedLogIds.value = selectedLogIds.value.filter((id) => !pageIds.has(id));
+  } else {
+    // Add tất cả id của page hiện tại (giữ các id ngoài page nếu có).
+    const merged = new Set(selectedLogIds.value);
+    for (const ev of logEvents.value) merged.add(ev.id);
+    selectedLogIds.value = Array.from(merged);
+  }
+}
+function toggleLogRow(id: string): void {
+  const i = selectedLogIds.value.indexOf(id);
+  if (i >= 0) selectedLogIds.value.splice(i, 1);
+  else selectedLogIds.value.push(id);
+}
+function exportSelected(): void {
+  // Wave 4 follow-up — BE endpoint chưa có. Tạm: dùng exportCsv() để xuất full filter.
+  exportCsv();
+}
+function markReviewed(): void {
+  // Stub UI — chờ BE bổ sung trường `reviewed` trên EventLog.
+  console.warn('[muc-tieu-detail] markReviewed stub — BE chưa có endpoint', selectedLogIds.value);
+  alert('Tính năng "Đánh dấu đã xem" sẽ bật khi BE bổ sung trường reviewed.');
+}
+function copySelectedIds(): void {
+  const ids = selectedLogIds.value.join('\n');
+  if (!ids) return;
+  void navigator.clipboard?.writeText(ids).catch(() => {
+    /* clipboard có thể bị deny — silent fail. */
+  });
+}
+function jumpToConv(ev: LogEvent): void {
+  // Cố gắng deep-link sang /chat. LogEvent chưa expose contactId/conversationId, fallback
+  // route /automation/muc-tieu (giữ user trên cùng page) cho tới khi BE bổ sung.
+  if (!ev.customerName) return;
+  void router.push({ path: '/chat', query: { q: ev.customerName } });
+}
 
 // ===================================================================
 // ============ HELPERS ==============================================
@@ -1727,41 +1992,123 @@ function todayIso(): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+function isoNDaysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const pad = (k: number): string => String(k).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 function formatLogTime(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function typePillClass(type: string): string {
-  const map: Record<string, string> = {
-    friend_request: 't-kb',
-    welcome: 't-wel',
-    follow_up: 't-bd',
-    customer_reply: 't-reply',
-    customer_block: 't-block',
-    converted_lead: 't-lead',
-    nick_disconnected: 't-dc',
-    nick_resumed: 't-sys',
-    zalo_check: 't-sys',
-    warning: 't-warn',
-  };
-  return map[type] ?? 't-sys';
+// 2026-06-03 — typePillClass/typePillLabel REMOVED. Option B dùng phase-pill (5 tone)
+// thay cho 10 type-pill class cũ (.t-kb / .t-wel / .t-bd / ...). Style cũ .type-pill
+// vẫn còn trong CSS dùng cho các page khác (chưa migration) nên giữ class CSS.
+
+// ===================================================================
+// ============ OPTION B (2026-06-03) — phase + nick dot + ago =======
+// ===================================================================
+// 5 phase tone map (success/info/warn/danger/neutral) cho .phase-pill.
+// Đồng nhất Monitor + Log: cùng emoji + label tiếng Việt.
+function phaseTone(type: string): string {
+  if (!type) return 'neutral';
+  if (
+    type === 'friend_request' ||
+    type === 'friend_request_sent' ||
+    type === 'friend_accepted' ||
+    type === 'friend_already' ||
+    type === 'welcome' ||
+    type === 'welcome_sent' ||
+    type === 'follow_up' ||
+    type === 'sequence_step_sent' ||
+    type === 'sequence_done'
+  ) return 'success';
+  if (type === 'customer_reply' || type === 'converted_lead') return 'info';
+  if (type === 'reaction_positive') return 'success';
+  if (type === 'reaction_negative') return 'danger';
+  if (type === 'customer_block' || type === 'nick_disconnected') return 'danger';
+  if (type === 'warning' || type.startsWith('failed_') || type === 'nick_resumed') return 'warn';
+  if (type === 'skipped' || type.startsWith('skipped_')) return 'neutral';
+  return 'neutral';
 }
-function typePillLabel(type: string): string {
+// Phase label tiếng Việt — short, dùng trong pill 12px (KHÔNG có icon, icon riêng).
+function phaseLabel(type: string): string {
   const map: Record<string, string> = {
-    friend_request: '🤝 Gửi KB',
-    welcome: '💌 Welcome',
-    follow_up: '⏰ Bám đuổi',
-    customer_reply: '🛑 Khách reply',
-    customer_block: '🚫 Khách block',
-    converted_lead: '💎 Thành Lead',
-    nick_disconnected: '⏸ Ngắt kết nối',
-    nick_resumed: '🔄 Tự chạy tiếp',
-    zalo_check: '🔍 Kiểm Zalo',
-    warning: '⚠️ Cảnh báo',
+    friend_request: 'Mời kết bạn',
+    friend_request_sent: 'Mời kết bạn',
+    friend_accepted: 'KH chấp nhận',
+    friend_already: 'Đã là bạn',
+    welcome: 'Welcome',
+    welcome_sent: 'Welcome',
+    follow_up: 'Bám đuổi',
+    sequence_step_sent: 'Bám đuổi',
+    sequence_done: 'Hoàn tất',
+    customer_reply: 'KH trả lời',
+    customer_block: 'Chặn',
+    converted_lead: 'Chuyển lead',
+    nick_disconnected: 'Nick ngắt',
+    nick_resumed: 'Nick chạy tiếp',
+    zalo_check: 'Kiểm Zalo',
+    reaction_positive: 'Reaction +',
+    reaction_negative: 'Reaction -',
+    warning: 'Cảnh báo',
+    skipped: 'Bỏ qua',
+    skipped_no_zalo: 'Bỏ qua: no-Zalo',
+    skipped_recency: 'Bỏ qua: recency',
+    failed_send: 'Lỗi gửi',
   };
   return map[type] ?? type;
+}
+// Phase icon dùng trong Log table (Monitor đã có ev.icon từ BE).
+function phaseIcon(type: string): string {
+  const map: Record<string, string> = {
+    friend_request: '📤',
+    friend_request_sent: '📤',
+    friend_accepted: '🤝',
+    friend_already: '🤝',
+    welcome: '👋',
+    welcome_sent: '👋',
+    follow_up: '✉️',
+    sequence_step_sent: '✉️',
+    sequence_done: '⭐',
+    customer_reply: '💬',
+    customer_block: '🚫',
+    converted_lead: '💎',
+    nick_disconnected: '⏸',
+    nick_resumed: '🔄',
+    zalo_check: '🔍',
+    reaction_positive: '❤️',
+    reaction_negative: '😡',
+    warning: '⚠️',
+    skipped: '⏭️',
+    skipped_no_zalo: '⏭️',
+    skipped_recency: '⏭️',
+    failed_send: '⚠️',
+  };
+  return map[type] ?? '·';
+}
+// Nick dot color — stable hash của nick name modulo 3 → n1/n2/n3 (blue/purple/orange).
+function nickDotClass(name: string | null | undefined): string {
+  if (!name) return 'n0';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xff;
+  return ['n1', 'n2', 'n3'][h % 3];
+}
+// Short ago label — "5s", "2 phút", "1 giờ", "3 ngày" (compact, KHÔNG có chữ "trước").
+function shortAgo(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  const sec = Math.max(1, Math.floor(ms / 1000));
+  if (sec < 60) return `${sec} giây`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} phút`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} giờ`;
+  const day = Math.floor(hr / 24);
+  return `${day} ngày`;
 }
 function logStatusClass(ev: LogEvent): string {
   if (ev.status === 'success') return 'running';
@@ -2059,38 +2406,88 @@ onUnmounted(() => {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.85); }
 }
-.monitor-body {
-  height: 280px;
-  overflow-y: auto;
-  background: var(--bg-page);
+/* Option B (2026-06-03) — Monitor + Log dùng chung .ev-table (bảng compact 1 dòng).
+   Drop hẳn .mon-row grid 3-col cũ. Dùng <table> để sale scan như Excel. */
+.ev-table-wrap {
+  background: white;
+  overflow-x: auto;
 }
-.mon-row {
-  display: grid;
-  grid-template-columns: 28px 92px 1fr;
-  gap: 10px;
-  padding: 7px 14px;
-  align-items: center;
-  border-bottom: 1px solid var(--border);
+.mon-table-wrap {
+  max-height: 480px;
+  overflow-y: auto;
+}
+.ev-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 13px;
   color: var(--text-1);
   background: white;
-  transition: background 0.12s;
 }
-.mon-row:hover { background: var(--bg-hover); }
-.mon-row .mon-icon { font-size: 16px; text-align: center; }
-.mon-row .mon-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 500; }
-.mon-row :deep(b), .mon-row b { font-weight: 600; color: var(--text-1); }
-.mon-row.is-new { animation: slideInTop 300ms ease-out; }
+.ev-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-3);
+  text-align: left;
+  white-space: nowrap;
+  z-index: 1;
+}
+.ev-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.ev-table tbody tr { transition: background 0.12s; }
+.ev-table tbody tr:hover { background: var(--bg-hover); }
+.ev-table tbody tr.selected { background: #eff6ff; }
+.ev-table tbody tr.is-new { animation: slideInTop 400ms ease-out; }
 @keyframes slideInTop {
-  from { opacity: 0; transform: translateY(-8px); }
+  from { opacity: 0; transform: translateY(-8px); background: var(--success-bg); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.mon-row.t-stop   .mon-icon { color: var(--danger); }
-.mon-row.t-block  .mon-icon { color: var(--text-2); }
-.mon-row.t-lead   .mon-icon { color: var(--purple); }
-.mon-row.t-warn   .mon-icon { color: var(--warning); }
-/* Fix #3b (2026-06-02) — Monitor enrichment: row index pill + meta (KH ↔ nick) */
-.mon-row .mon-row-idx {
+.ev-empty-row {
+  padding: 28px 14px !important;
+  color: var(--text-3);
+  font-style: italic;
+  text-align: center;
+  font-size: 12px;
+}
+
+/* Monitor table column widths */
+.mon-table .col-time   { width: 84px; font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 12px; }
+.mon-table .col-phase  { width: 152px; }
+.mon-table .col-kh     { width: 200px; }
+.mon-table .col-nick   { width: 152px; }
+.mon-table .col-status { min-width: 240px; }
+.mon-table .col-ago    { width: 76px; text-align: right; color: var(--text-mute); font-size: 11px; }
+
+/* Phase pill — 5 màu (success/info/warn/danger/neutral) */
+.phase-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.phase-pill .phase-ico { font-size: 12px; line-height: 1; }
+.phase-pill.phase-success { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.phase-pill.phase-info    { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+.phase-pill.phase-warn    { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+.phase-pill.phase-danger  { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.phase-pill.phase-neutral { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+
+/* Row idx pill — "#3" badge nhỏ trước tên KH */
+.row-idx {
   display: inline-block;
   min-width: 22px;
   padding: 1px 5px;
@@ -2100,11 +2497,38 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 600;
   text-align: center;
-  margin-right: 4px;
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
 }
-.mon-row .mon-meta { color: var(--text-3); font-size: 11px; margin-left: 4px; }
-.mon-row .mon-nick { color: var(--primary); font-weight: 500; }
-.mon-empty { padding: 28px 14px; color: var(--text-3); font-style: italic; text-align: center; font-size: 12px; }
+.kh-name { font-weight: 500; color: var(--text-1); }
+
+/* Nick dot — màu hash theo nick name (3 màu cycle) */
+.nick-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.nick-dot.n1 { background: #2563eb; }
+.nick-dot.n2 { background: #9333ea; }
+.nick-dot.n3 { background: #f59e0b; }
+.nick-dot.n0 { background: var(--text-mute); }
+.nick-name { color: var(--text-2); font-size: 12px; }
+
+/* Tone chip — Monitor "Trạng thái" cell, dùng ev.tone (stop/block/lead/warn/info) */
+.tone-chip {
+  display: inline;
+  font-size: 13px;
+  color: var(--text-1);
+}
+.tone-chip.tone-stop  { color: var(--danger); }
+.tone-chip.tone-block { color: var(--text-2); }
+.tone-chip.tone-lead  { color: var(--purple); font-weight: 600; }
+.tone-chip.tone-warn  { color: var(--warning); }
+.tone-chip.tone-info  { color: var(--text-1); }
+.tone-chip :deep(b), .tone-chip b { font-weight: 600; color: var(--text-1); }
 
 /* eta */
 .eta-bar {
@@ -2669,16 +3093,32 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   font-size: 14px; font-weight: 700; margin: 0;
   color: var(--text-1); display: flex; align-items: center; gap: 6px;
 }
-.log-toolbar {
+/* Option B (2026-06-03) — Filter bar 2 hàng (range + search + dropdown + chip type) */
+.filter-bar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: white;
-  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.log-toolbar select,
-.log-toolbar input[type="date"],
-.log-toolbar input[type="text"] {
-  padding: 7px 10px;
+.filter-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.filter-row-chips { gap: 8px; }
+.filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.filter-input,
+.filter-select {
+  padding: 6px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   font-size: 12px;
@@ -2686,26 +3126,131 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   color: var(--text-1);
   background: white;
 }
-.log-toolbar select:focus,
-.log-toolbar input:focus {
+.filter-input:focus,
+.filter-select:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(45, 127, 249, 0.15);
 }
-.log-toolbar input[type="text"] { width: 240px; }
-.log-toolbar .date-range { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.filter-input-search { width: 260px; min-width: 240px; }
+.filter-input-date { width: 130px; font-variant-numeric: tabular-nums; }
+.filter-select { min-width: 160px; cursor: pointer; }
+.filter-spacer { flex: 1; }
+.filter-reset {
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.filter-reset:hover { background: var(--bg-soft); border-color: var(--text-3); }
 
-.log-table th, .log-table td { padding: 9px 12px; font-size: 12px; }
-.log-table .col-time { width: 130px; font-variant-numeric: tabular-nums; color: var(--text-2); }
-.log-table .col-type { width: 130px; }
-.log-table .col-nick { width: 130px; }
-.log-table .col-kh { width: 180px; }
-.log-table .col-row { width: 70px; font-variant-numeric: tabular-nums; color: var(--text-3); }
-.log-table .col-target { width: 180px; }
-.log-table .col-status { width: 130px; }
-.log-table .col-detail { color: var(--text-2); }
-.log-table tr { cursor: default; }
-.log-table tbody tr:hover { background: var(--bg-hover); }
+/* Range preset buttons (24h / 7 ngày / 30 ngày / Tất cả / Tự chọn) */
+.range-btns {
+  display: inline-flex;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.range-btn {
+  padding: 5px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.range-btn:hover { background: white; color: var(--text-1); }
+.range-btn.active {
+  background: white;
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+}
+
+/* Log table — 8 cột Option B */
+.log-table .col-check  { width: 32px; padding: 6px 8px; }
+.log-table .col-check input[type="checkbox"] { cursor: pointer; }
+.log-table .col-time   { width: 130px; font-variant-numeric: tabular-nums; }
+.log-table .col-time .time-main { color: var(--text-2); font-size: 12px; }
+.log-table .col-time .time-rel  { color: var(--text-mute); font-size: 10px; margin-top: 1px; }
+.log-table .col-phase  { width: 152px; }
+.log-table .col-kh     { width: 200px; }
+.log-table .col-nick   { width: 152px; }
+.log-table .col-status { width: 140px; }
+.log-table .col-detail { min-width: 220px; color: var(--text-2); font-size: 12px; }
+.log-table .col-detail .detail-text { display: inline-block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.log-table .col-action { width: 70px; text-align: right; }
+.icon-btn {
+  width: 28px; height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-2);
+  transition: background 0.12s, border-color 0.12s;
+}
+.icon-btn:hover { background: var(--bg-soft); border-color: var(--border); color: var(--text-1); }
+
+/* Bulk action bar — sticky bottom dark */
+.bulk-bar {
+  position: sticky;
+  bottom: 60px;
+  margin-top: 10px;
+  background: #1f2937;
+  color: white;
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  z-index: 15;
+  animation: bulkSlideUp 0.25s ease-out;
+}
+@keyframes bulkSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.count-pill {
+  background: rgba(255, 255, 255, 0.18);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bulk-label { font-size: 12px; color: #d1d5db; }
+.bulk-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.bulk-btn:hover { background: rgba(255, 255, 255, 0.22); }
+.bulk-btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #d1d5db;
+}
+.bulk-btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* Log head actions cluster */
+.log-head-actions { display: inline-flex; gap: 8px; align-items: center; }
 
 .type-pill {
   display: inline-flex; align-items: center; gap: 4px;
