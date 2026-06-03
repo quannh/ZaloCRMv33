@@ -127,23 +127,75 @@
             </v-menu>
           </div>
 
-          <!-- Row 3: nick avatar + nick name | in/out | last online -->
+          <!-- Row 3: nick avatar + nick name | in/out | last online
+               Sprint v3 Tuần 3 Row 6.9 (2026-06-03): wrap NickAvatarLock + nick-name
+               trong v-menu activator → click hiện dropdown TẤT CẢ nick (Cách B) cho
+               sale switch sang chat với KH qua nick khác. KH đã KB → switch ngay.
+               KH chưa KB → trong dropdown có nút mời nhanh (defer feature). -->
           <div class="ch-row-2">
-            <NickAvatarLock
-              v-if="conversation.zaloAccount"
-              :privacy-mode="conversation.zaloAccount.privacyMode"
+            <v-menu
+              v-if="conversation.zaloAccount && conversation.contact?.id"
+              :close-on-content-click="true"
+              location="bottom start"
+              @update:model-value="onNickMenuToggle"
             >
-              <Avatar
-                :src="conversation.zaloAccount.avatarUrl"
-                :name="conversation.zaloAccount.displayName || 'Nick'"
-                :size="22"
-                :gradient-seed="conversation.zaloAccount.id"
-                platform="zalo"
-              />
-            </NickAvatarLock>
-            <span class="nick-name" :title="conversation.zaloAccount?.displayName || ''">
-              {{ conversation.zaloAccount?.displayName || '—' }}
-            </span>
+              <template #activator="{ props: nickProps }">
+                <span class="nick-switcher" v-bind="nickProps" title="Chọn nick để chat với KH này">
+                  <NickAvatarLock :privacy-mode="conversation.zaloAccount.privacyMode">
+                    <Avatar
+                      :src="conversation.zaloAccount.avatarUrl"
+                      :name="conversation.zaloAccount.displayName || 'Nick'"
+                      :size="22"
+                      :gradient-seed="conversation.zaloAccount.id"
+                      platform="zalo"
+                    />
+                  </NickAvatarLock>
+                  <span class="nick-name">
+                    {{ conversation.zaloAccount?.displayName || '—' }}
+                  </span>
+                  <span class="nick-caret">▾</span>
+                </span>
+              </template>
+              <div class="nick-dd-panel">
+                <div class="nick-dd-header">Chọn nick chat với KH</div>
+                <div v-if="loadingNickCoverage" class="nick-dd-loading">Đang tải...</div>
+                <div v-else-if="nickCoverageList.length === 0" class="nick-dd-empty">
+                  KH chưa được nick CRM nào kết bạn
+                </div>
+                <button
+                  v-for="row in nickCoverageList"
+                  :key="row.zaloAccountId"
+                  class="nick-dd-item"
+                  :class="{ active: row.zaloAccountId === conversation.zaloAccount?.id, switching: switchingToNickId === row.zaloAccountId }"
+                  :disabled="switchingToNickId === row.zaloAccountId"
+                  @click="onPickNick(row)"
+                >
+                  <Avatar
+                    :src="row.avatarUrl"
+                    :name="row.displayName || 'Nick'"
+                    :size="28"
+                    :gradient-seed="row.zaloAccountId"
+                    platform="zalo"
+                  />
+                  <div class="nick-dd-info">
+                    <div class="nick-dd-name">{{ row.displayName || '—' }}</div>
+                    <div class="nick-dd-meta">
+                      <span class="nick-dd-status" :class="`status-${row.friendshipStatus}`">
+                        {{ friendshipStatusLabel(row.friendshipStatus) }}
+                      </span>
+                      <span v-if="row.zaloAccountId === conversation.zaloAccount?.id" class="nick-dd-current">đang dùng</span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </v-menu>
+            <!-- Fallback nếu chưa có zaloAccount (legacy data) -->
+            <template v-else>
+              <NickAvatarLock v-if="conversation.zaloAccount" :privacy-mode="conversation.zaloAccount.privacyMode">
+                <Avatar :src="conversation.zaloAccount.avatarUrl" :name="conversation.zaloAccount.displayName || 'Nick'" :size="22" :gradient-seed="conversation.zaloAccount.id" platform="zalo" />
+              </NickAvatarLock>
+              <span class="nick-name">{{ conversation.zaloAccount?.displayName || '—' }}</span>
+            </template>
             <span class="ch-sep">|</span>
             <span
               class="msg-counts"
@@ -863,6 +915,8 @@ const emit = defineEmits<{
   'typing': [];
   'refresh-thread': [];
   'care-status-changed': [value: string];
+  // Sprint v3 Tuần 3 Row 6.9 (2026-06-03): sale chọn nick khác → ChatView navigate.
+  'switch-conversation': [convId: string];
 }>();
 
 const toast = useToast();
@@ -1383,6 +1437,80 @@ function onHeaderAvatarClick() {
   if (!uid) return;
   userInfoUid.value = uid;
   userInfoDialog.value = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprint v3 Tuần 3 Row 6.9 (2026-06-03): Nick switcher dropdown trong chat header.
+// Sale click avatar/tên nick → dropdown tất cả nick (Cách B): KB / đã mời / chưa.
+// Click nick KB → ensure-conversation + navigate (Cách 1 auto tạo mượt).
+// Click nick chưa KB → defer (chưa wire — TODO sprint sau khi Anh chốt flow mời).
+interface NickCoverageRow {
+  friendId: string;
+  zaloAccountId: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  zaloUidInNick: string;
+  friendshipStatus: string; // 'accepted' | 'pending' | 'declined' | 'none'
+}
+const nickCoverageList = ref<NickCoverageRow[]>([]);
+const loadingNickCoverage = ref(false);
+const switchingToNickId = ref<string | null>(null);
+
+async function onNickMenuToggle(open: boolean) {
+  if (!open) return;
+  const contactId = props.conversation?.contact?.id;
+  if (!contactId) return;
+  if (loadingNickCoverage.value) return;
+  loadingNickCoverage.value = true;
+  try {
+    const { data } = await api.get(`/contacts/${contactId}/friendships`);
+    const rows: any[] = Array.isArray(data?.friendships) ? data.friendships : [];
+    nickCoverageList.value = rows.map(r => ({
+      friendId: r.id,
+      zaloAccountId: r.zaloAccountId,
+      displayName: r.zaloAccount?.displayName ?? null,
+      avatarUrl: r.zaloAccount?.avatarUrl ?? null,
+      zaloUidInNick: r.zaloUidInNick,
+      friendshipStatus: r.friendshipStatus || 'none',
+    }));
+  } catch (err) {
+    console.error('[nick-switcher] load friendships failed:', err);
+    toast.error('Không tải được danh sách nick');
+    nickCoverageList.value = [];
+  } finally {
+    loadingNickCoverage.value = false;
+  }
+}
+
+function friendshipStatusLabel(s: string): string {
+  if (s === 'accepted') return '✓ Đã kết bạn';
+  if (s === 'pending') return '⏳ Đã gửi mời';
+  if (s === 'declined') return '✗ Đã từ chối';
+  return 'Chưa kết bạn';
+}
+
+async function onPickNick(row: NickCoverageRow) {
+  // Nick hiện tại → không làm gì
+  if (row.zaloAccountId === props.conversation?.zaloAccount?.id) return;
+  // Chỉ navigate khi đã KB. Chưa KB → toast hướng dẫn (defer mời nhanh).
+  if (row.friendshipStatus !== 'accepted') {
+    toast.push('Nick này chưa kết bạn với KH. Hãy dùng nút "Kết bạn" để gửi lời mời.');
+    return;
+  }
+  switchingToNickId.value = row.zaloAccountId;
+  try {
+    // Cách 1 (Anh chốt): ensure-conversation mượt → BE find-or-create → trả convId
+    const { data } = await api.post(`/friends/${row.friendId}/ensure-conversation`);
+    const newConvId = data?.conversationId;
+    if (!newConvId) throw new Error('Không nhận được conversationId');
+    // Navigate sang conv mới — emit lên parent ChatView để chuyển route
+    emit('switch-conversation', newConvId);
+  } catch (err) {
+    console.error('[nick-switcher] ensure-conversation failed:', err);
+    toast.error('Không chuyển được nick. Vui lòng thử lại.');
+  } finally {
+    switchingToNickId.value = null;
+  }
 }
 
 // ── Reminder notice (inline timeline event) ─────────────────────────────────
@@ -2593,6 +2721,79 @@ watch(() => props.editingMessage?.id, async (id) => {
   font-weight: 500; color: var(--smax-text);
   max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Sprint v3 Tuần 3 Row 6.9 — Nick switcher dropdown */
+.nick-switcher {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+.nick-switcher:hover { background: var(--smax-grey-100, #f5f6fa); }
+.nick-caret { font-size: 9px; color: var(--smax-grey-500); opacity: 0.7; }
+.nick-switcher:hover .nick-caret { opacity: 1; }
+
+.nick-dd-panel {
+  background: #fff;
+  border-radius: 10px;
+  min-width: 280px;
+  max-width: 340px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+.nick-dd-header {
+  font-size: 11px; font-weight: 600;
+  color: var(--smax-grey-600);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 10px 4px;
+}
+.nick-dd-loading, .nick-dd-empty {
+  padding: 12px; text-align: center;
+  font-size: 12px; color: var(--smax-grey-500);
+  font-style: italic;
+}
+.nick-dd-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+.nick-dd-item:hover:not(:disabled) { background: var(--smax-grey-100, #f5f6fa); }
+.nick-dd-item.active { background: rgba(59, 130, 246, 0.08); }
+.nick-dd-item.switching { opacity: 0.6; cursor: wait; }
+.nick-dd-item:disabled { cursor: not-allowed; }
+.nick-dd-info { flex: 1; min-width: 0; }
+.nick-dd-name {
+  font-weight: 600; font-size: 13px;
+  color: var(--smax-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nick-dd-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.nick-dd-status { font-weight: 500; }
+.status-accepted { color: #00897b; }
+.status-pending { color: #ef6c00; }
+.status-declined, .status-none { color: var(--smax-grey-500); }
+.nick-dd-current {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
 }
 .msg-counts {
   display: inline-flex; align-items: center; gap: 7px;

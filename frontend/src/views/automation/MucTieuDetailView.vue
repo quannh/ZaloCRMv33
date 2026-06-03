@@ -875,6 +875,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api';
 import { formatInOrgTz } from '@/composables/use-org-timezone';
+import { useMucTieuSocket, type FriendInviteClaimedPayload } from '@/composables/use-muc-tieu-socket';
 
 const route = useRoute();
 const router = useRouter();
@@ -2238,6 +2239,29 @@ function onDocClick(e: MouseEvent): void {
   const wrap = menuWrapRef.value;
   if (wrap && !wrap.contains(e.target as Node)) menuOpen.value = false;
 }
+
+// Sprint v3 Tuần 3 Row 2.2 (2026-06-03): listen socket realtime cho event
+// "friend-invite:claimed" — surface UI ngay khi nick pick KH (đỡ phải chờ poll 5s).
+// Filter theo triggerId để bỏ qua claim của Mục tiêu khác cùng org.
+const _escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+useMucTieuSocket((payload: FriendInviteClaimedPayload) => {
+  if (payload.triggerId !== triggerId) return;
+  const isoAt = payload.claimedAt;
+  const liveEv: LiveEvent = {
+    id: `claimed-${payload.entryId}-${Date.now()}`,
+    at: isoAt,
+    timeLabel: new Date(isoAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    type: 'friend_sent',
+    icon: '🤝',
+    text: `Nick <b>${_escHtml(payload.nickName)}</b> → <b>${_escHtml(payload.contactName)}</b> (#${payload.rowIndex})`,
+    tone: null,
+    isNew: true,
+    nickName: payload.nickName,
+    customerName: payload.contactName,
+    rowIndex: payload.rowIndex,
+  };
+  mergeEvents([liveEv]);
+});
 
 onMounted(() => {
   // Initial tab from URL hash

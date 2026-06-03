@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { requireAnyGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { runContactIntelligence } from './contact-intelligence.js';
@@ -1364,7 +1365,12 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── GET /api/v1/contacts/:id/friendships — list Friend rows (per CRM nick chăm KH) ─
-  app.get('/api/v1/contacts/:id/friendships', async (request: FastifyRequest, reply: FastifyReply) => {
+  // Sprint v3 Tuần 3 Row 6.9 (2026-06-03): wrap RBAC. Dùng requireAnyGrant để sale
+  // (chỉ có contact.access) lẫn admin (có friend.access) đều dùng được dropdown nick.
+  app.get('/api/v1/contacts/:id/friendships', {
+    preHandler: [requireAnyGrant(['contact', 'access'], ['friend', 'access'])],
+    config: { contentClass: 'metadata', rbacResource: 'contact', rbacAction: 'access' },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -1570,7 +1576,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /api/v1/friends/:id/ensure-conversation — tạo (hoặc lấy) Conversation cho Friend ──
   // Use case: sale muốn nhắn KH lần đầu (Friend từ sync, chưa có hội thoại). Trả convId
   // để FE router.push thẳng vào Chat. Idempotent — gọi nhiều lần vẫn trả cùng convId.
-  app.post('/api/v1/friends/:id/ensure-conversation', async (request: FastifyRequest, reply: FastifyReply) => {
+  // Sprint v3 Tuần 3 Row 6.9 (2026-06-03): wrap RBAC sale switch nick trong header.
+  app.post('/api/v1/friends/:id/ensure-conversation', {
+    preHandler: [requireAnyGrant(['contact', 'access'], ['friend', 'access'])],
+    config: { contentClass: 'metadata', rbacResource: 'friend', rbacAction: 'access' },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id: friendId } = request.params as { id: string };

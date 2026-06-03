@@ -16,6 +16,7 @@
 //   (spike #3 verified). Multi-instance setup: instance B sees lock taken
 //   by instance A → 0 worker spawn → log warning.
 
+import type { Server as SocketIOServer } from 'socket.io';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { zaloOps } from '../../../shared/zalo-operations.js';
@@ -26,6 +27,14 @@ import { claimNextEntry, markEntrySent, releaseEntryFailed } from './pool-query.
 import { logEvent } from './event-log-service.js';
 import { checkMultiNickThreshold } from '../queues/worker-guards.js';
 import { getBullMQRedis } from '../queues/redis-connection.js';
+
+// 2026-06-03 Sprint v3 Tuần 3 Row 2.2: socket emit "claimed" event mỗi khi nick
+// pick entry để Mục tiêu Detail dashboard surface UI "KH X → nick Y đang xử lý".
+// Inject io từ app.ts:391 qua setNickWorkerIO(io). Org-scoped: io.to('org:${orgId}').
+let ioRef: SocketIOServer | null = null;
+export function setNickWorkerIO(io: SocketIOServer): void {
+  ioRef = io;
+}
 
 // ── Phase 2 idempotency sentinel ─────────────────────────────────────────
 // Stuck sweeper P1 (2026-06-02): worker crash BETWEEN Phase 2 sendFriendRequest
@@ -797,6 +806,19 @@ async function runTick(nickId: string): Promise<void> {
     const contactDisplayForLog =
       resolvedDisplayName?.trim() || entry.nameRaw?.trim() || entry.phoneE164 || 'KH';
     const nickDisplayForLog = nick.displayName?.trim() || nickId.slice(0, 8);
+
+    // Sprint v3 Tuần 3 Row 2.2: emit socket realtime cho Mục tiêu Detail dashboard.
+    // Org-scoped, fire-and-forget. ioRef có thể null nếu nick spawn trước app.ts setIO.
+    ioRef?.to(`org:${worker.orgId}`).emit('friend-invite:claimed', {
+      entryId: entry.id,
+      contactId,
+      contactName: contactDisplayForLog,
+      nickId,
+      nickName: nickDisplayForLog,
+      claimedAt: new Date().toISOString(),
+      triggerId: entry.triggerId,
+      rowIndex: entry.rowIndex,
+    });
     void logEvent({
       orgId: worker.orgId,
       triggerId: entry.triggerId,

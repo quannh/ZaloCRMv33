@@ -80,7 +80,7 @@ import { triggerRoutes } from './modules/automation/triggers/trigger-routes.js';
 import { friendInviteRoutes } from './modules/automation/friend-invite/friend-invite-routes.js';
 import { startFriendInviteSweepers, stopFriendInviteSweepers } from './modules/automation/friend-invite/sweepers.js';
 import { startWelcomeProbeWorker, stopWelcomeProbeWorker } from './modules/automation/friend-invite/welcome-probe-worker.js';
-import { bootstrapFriendInviteWorkers, stopAllNickWorkers } from './modules/automation/friend-invite/nick-worker.js';
+import { bootstrapFriendInviteWorkers, stopAllNickWorkers, setNickWorkerIO } from './modules/automation/friend-invite/nick-worker.js';
 import { broadcastRoutes } from './modules/automation/broadcasts/broadcast-routes.js';
 import { webhookRoutes as automationWebhookRoutes } from './modules/automation/webhooks/webhook-routes.js';
 // Tệp khách hàng (CustomerList) — Phase 7 audience layer
@@ -388,6 +388,9 @@ async function bootstrap() {
       // bootstrap workers — guard with try/catch để container không restart loop
       // nếu DB chưa migrate đủ cột (đang phát triển feature)
       try {
+        // Sprint v3 Tuần 3 Row 2.2: inject io trước bootstrap để emit socket
+        // "friend-invite:claimed" tới Mục tiêu Detail dashboard realtime.
+        setNickWorkerIO(io);
         await bootstrapFriendInviteWorkers();
       } catch (err) {
         logger.error('[friend-invite] bootstrap workers failed (non-fatal):', err);

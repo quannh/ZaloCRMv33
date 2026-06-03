@@ -72,6 +72,7 @@
       @cancel-reply-edit="onCancelReplyEdit"
       @typing="onTyping"
       @refresh-thread="selectedConvId && fetchMessages(selectedConvId)"
+      @switch-conversation="onSwitchToNickConv"
     />
 
     <!-- Folder management modal (overlay) -->
@@ -341,6 +342,16 @@ function onConversationMoved(_id: string, _tab: string) {
 async function onComposeOpened(conversationId: string) {
   await fetchConversations();
   router.push({ name: 'Chat', params: { convId: conversationId } });
+}
+
+// Sprint v3 Tuần 3 Row 6.9 (2026-06-03): sale switch nick trong header chat.
+// Conv mới có thể chưa nằm trong list 100 → refresh trước khi push.
+async function onSwitchToNickConv(convId: string) {
+  // Nếu conv chưa nằm trong list (KH chưa từng chat qua nick mới) → refresh để list có
+  if (!conversations.value.find(c => c.id === convId)) {
+    await fetchConversations();
+  }
+  router.push({ name: 'Chat', params: { convId } });
 }
 
 // Auto-show panel khi chọn conv có contact
