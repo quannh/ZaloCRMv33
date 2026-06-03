@@ -22,9 +22,19 @@
         <div v-if="loading" class="cpd-loading">⏳ Đang tải hồ sơ khách hàng…</div>
         <div v-else-if="error" class="cpd-error">⚠️ {{ error }}</div>
 
-        <template v-else-if="c">
-          <!-- ════════ Header ════════ -->
-          <header class="cpd-head">
+        <template v-else-if="c || isCreate">
+          <!-- ════════ Header — chế độ TẠO MỚI (gọn, cùng style Smax) ════════ -->
+          <header v-if="isCreate" class="cpd-head cpd-head-create">
+            <div class="cpd-av cpd-av-create"><span>＋</span></div>
+            <div class="cpd-head-main">
+              <div class="cpd-name">Thêm khách hàng mới</div>
+              <div class="cpd-sub"><span>Nhập thông tin khách. Tên + Số điện thoại là bắt buộc.</span></div>
+            </div>
+            <button class="cpd-x" @click="close" title="Đóng">✕</button>
+          </header>
+
+          <!-- ════════ Header — chế độ XEM hồ sơ ════════ -->
+          <header v-else-if="c" class="cpd-head">
             <div class="cpd-av" :style="{ background: avatarBg }">
               <img v-if="c.avatarUrl" :src="c.avatarUrl" :alt="displayName" />
               <span v-else>{{ initials }}</span>
@@ -56,8 +66,8 @@
             <button class="cpd-x" @click="close" title="Đóng">✕</button>
           </header>
 
-          <!-- ════════ Tabs ════════ -->
-          <nav class="cpd-tabs">
+          <!-- ════════ Tabs (ẩn khi tạo mới — chỉ form Tổng quan) ════════ -->
+          <nav v-if="!isCreate" class="cpd-tabs">
             <button
               v-for="t in tabs" :key="t.key"
               class="cpd-tab" :class="{ active: activeTab === t.key }"
@@ -137,7 +147,7 @@
                       </select>
                     </span>
                   </div>
-                  <div class="kv">
+                  <div v-if="!isCreate" class="kv">
                     <span class="k">Sale hỗ trợ <span class="agg">cùng chăm</span></span>
                     <span class="v">
                       <div class="assist-list">
@@ -148,16 +158,16 @@
                       </div>
                     </span>
                   </div>
-                  <div class="kv">
+                  <div v-if="!isCreate" class="kv">
                     <span class="k">Trạng thái KH <span class="agg">tổng hợp</span></span>
                     <span class="v">
-                      <span v-if="c.displayStatus" class="chip" :style="statusPillStyle">{{ c.displayStatus.name }}</span>
+                      <span v-if="c?.displayStatus" class="chip" :style="statusPillStyle">{{ c.displayStatus.name }}</span>
                       <span v-else class="empty">—</span>
                     </span>
                   </div>
                   <div class="kv">
                     <span class="k">Nguồn khách</span>
-                    <span class="v"><input v-model="form.source" class="cpd-in" /></span>
+                    <span class="v"><input v-model="form.source" class="cpd-in" placeholder="vd Facebook, Tổng đài…" /></span>
                   </div>
                   <div class="kv">
                     <span class="k">Tag CRM</span>
@@ -174,17 +184,17 @@
                       </div>
                     </span>
                   </div>
-                  <div class="kv">
+                  <div v-if="!isCreate" class="kv">
                     <span class="k">Score <span class="agg">tổng hợp</span></span>
-                    <span class="v"><b :class="scoreClass">{{ Math.round(c.displayLeadScore ?? c.leadScore ?? 0) }}</b></span>
+                    <span class="v"><b :class="scoreClass">{{ Math.round((c?.displayLeadScore ?? c?.leadScore) || 0) }}</b></span>
                   </div>
-                  <div class="kv">
+                  <div v-if="!isCreate" class="kv">
                     <span class="k">Zalo <span class="agg">tổng hợp</span></span>
                     <span class="v"><span class="zpill" :class="zaloPillClass">{{ zaloPillText }}</span></span>
                   </div>
                 </div>
               </div>
-              <div class="cpd-aggnote">
+              <div v-if="!isCreate" class="cpd-aggnote">
                 💡 Field gắn nhãn <span class="agg">tổng hợp</span> tự cập nhật từ các nick chăm (tab "Nick chăm").
                 Thông tin cá nhân sửa trực tiếp tại đây, lưu vào hồ sơ tổng.
               </div>
@@ -262,12 +272,19 @@
 
           <!-- ════════ Footer ════════ -->
           <footer class="cpd-foot">
-            <button v-if="c.hasZalo" class="btn primary" @click="goChat">💬 Mở chat Zalo</button>
-            <button v-else class="btn virtual" @click="goChat">🔒 Mở chat nội bộ</button>
-            <button class="btn" @click="$emit('automation', c)">⚡ Marketing</button>
-            <span class="spacer"></span>
-            <button class="btn" :disabled="saving" @click="save">{{ saving ? '⏳ Đang lưu…' : '💾 Lưu thay đổi' }}</button>
-            <button class="btn" @click="close">✕ Đóng</button>
+            <template v-if="isCreate">
+              <button class="btn primary" :disabled="saving" @click="save">{{ saving ? '⏳ Đang tạo…' : '＋ Tạo khách hàng' }}</button>
+              <span class="spacer"></span>
+              <button class="btn" @click="close">✕ Hủy</button>
+            </template>
+            <template v-else-if="c">
+              <button v-if="c.hasZalo" class="btn primary" @click="goChat">💬 Mở chat Zalo</button>
+              <button v-else class="btn virtual" @click="goChat">🔒 Mở chat nội bộ</button>
+              <button class="btn" @click="$emit('automation', c)">⚡ Marketing</button>
+              <span class="spacer"></span>
+              <button class="btn" :disabled="saving" @click="save">{{ saving ? '⏳ Đang lưu…' : '💾 Lưu thay đổi' }}</button>
+              <button class="btn" @click="close">✕ Đóng</button>
+            </template>
           </footer>
         </template>
       </div>
@@ -283,17 +300,22 @@ import { useToast } from '@/composables/use-toast';
 import { formatRecentDateTime, cleanPreview } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: boolean;
   /** Mở bằng id (tự fetch) HOẶC contact object có sẵn (dùng luôn, vẫn refetch chi tiết). */
   contactId?: string | null;
   contact?: Contact | null;
-}>();
+  /** 'view' = xem/sửa hồ sơ KH có sẵn. 'create' = form thêm KH mới (cùng style Smax). */
+  mode?: 'view' | 'create';
+}>(), { mode: 'view' });
 const emit = defineEmits<{
   'update:modelValue': [v: boolean];
   saved: [];
+  created: [c: { id: string; fullName: string | null; phone: string | null }];
   automation: [c: Contact];
 }>();
+
+const isCreate = computed(() => props.mode === 'create');
 
 const router = useRouter();
 const toast = useToast();
@@ -346,16 +368,31 @@ function hydrateForm(ct: Contact) {
   };
 }
 
+function emptyForm() {
+  form.value = {
+    fullName: '', gender: null, birthYear: '', phone: '', extraPhones: [],
+    email: '', occupation: '', addressLine: '', source: '', assignedUserId: null, tags: [],
+  };
+}
+
 // ── Fetch chi tiết khi mở ──
 async function loadDetail() {
-  const id = props.contactId || props.contact?.id;
-  if (!id) return;
-  loading.value = true;
-  error.value = null;
   activeTab.value = 'overview';
   friends.value = [];
   timeline.value = [];
   notes.value = [];
+  // Mode create: form rỗng, không fetch, không cần c.value (header create không bind c).
+  if (isCreate.value) {
+    c.value = null;
+    error.value = null;
+    emptyForm();
+    loadUsers();
+    return;
+  }
+  const id = props.contactId || props.contact?.id;
+  if (!id) return;
+  loading.value = true;
+  error.value = null;
   try {
     const res = await api.get<Contact & { friends?: any[] }>(`/contacts/${id}`);
     c.value = res.data;
@@ -428,23 +465,50 @@ function addTag() {
   newTag.value = '';
 }
 async function save() {
+  if (saving.value) return;
+  const by = typeof form.value.birthYear === 'string' ? parseInt(form.value.birthYear) : form.value.birthYear;
+  const payload: Record<string, any> = {
+    fullName: form.value.fullName,
+    gender: form.value.gender,
+    birthYear: Number.isFinite(by) ? by : null,
+    phone: form.value.phone,
+    phonesExtra: form.value.extraPhones.filter((p) => p.phone?.trim()),
+    email: form.value.email,
+    occupation: form.value.occupation,
+    addressLine: form.value.addressLine,
+    source: form.value.source,
+    assignedUserId: form.value.assignedUserId,
+  };
+
+  // ── Chế độ TẠO MỚI: POST /contacts ──
+  if (isCreate.value) {
+    if (!form.value.fullName?.trim() || !form.value.phone?.trim()) {
+      toast.warning('Vui lòng nhập Tên khách và Số điện thoại');
+      return;
+    }
+    saving.value = true;
+    try {
+      const res = await api.post<{ id: string; fullName: string | null; phone: string | null }>(
+        '/contacts', { ...payload, tags: form.value.tags },
+      );
+      toast.success('Đã thêm khách hàng mới');
+      emit('created', { id: res.data.id, fullName: res.data.fullName, phone: res.data.phone });
+      emit('saved');
+      close();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || err?.response?.data?.error || 'Tạo khách thất bại');
+    } finally {
+      saving.value = false;
+    }
+    return;
+  }
+
+  // ── Chế độ XEM: PUT /contacts/:id ──
   const id = c.value?.id;
-  if (!id || saving.value) return;
+  if (!id) return;
   saving.value = true;
   try {
-    const by = typeof form.value.birthYear === 'string' ? parseInt(form.value.birthYear) : form.value.birthYear;
-    await api.put(`/contacts/${id}`, {
-      fullName: form.value.fullName,
-      gender: form.value.gender,
-      birthYear: Number.isFinite(by) ? by : null,
-      phone: form.value.phone,
-      phonesExtra: form.value.extraPhones.filter((p) => p.phone?.trim()),
-      email: form.value.email,
-      occupation: form.value.occupation,
-      addressLine: form.value.addressLine,
-      source: form.value.source,
-      assignedUserId: form.value.assignedUserId,
-    });
+    await api.put(`/contacts/${id}`, payload);
     // Tag riêng endpoint
     await api.put(`/contacts/${id}/tags`, { tags: form.value.tags });
     toast.success('Đã lưu hồ sơ khách hàng');
@@ -588,6 +652,8 @@ function formatVnPhone(phone: string | null | undefined): string {
 .cpd-head { padding: 16px 20px; border-bottom: 1px solid var(--smax-grey-200); display: flex; gap: 14px; align-items: flex-start; position: relative; }
 .cpd-av { width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 22px; flex-shrink: 0; overflow: hidden; }
 .cpd-av img { width: 100%; height: 100%; object-fit: cover; }
+.cpd-head-create { align-items: center; }
+.cpd-av-create { background: var(--smax-primary-soft); color: var(--smax-primary); font-size: 28px; font-weight: 400; }
 .cpd-head-main { flex: 1; min-width: 0; }
 .cpd-name { font-size: 19px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gtag { font-size: 12px; border-radius: 8px; padding: 1px 7px; font-weight: 600; }

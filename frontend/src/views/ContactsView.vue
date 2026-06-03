@@ -47,29 +47,46 @@
         <option v-for="u in allUsers" :key="u.id" :value="u.id">{{ u.fullName }}</option>
       </select>
 
+      <button class="btn-advanced" :class="{ on: showAdvanced }" @click="showAdvanced = !showAdvanced">
+        {{ showAdvanced ? '▾' : '▸' }} Lọc nâng cao
+        <span v-if="advancedActiveCount > 0" class="btn-badge">{{ advancedActiveCount }}</span>
+      </button>
+      <button v-if="hasAnyFilter" class="btn-clear" @click="clearAllFilters" title="Xoá tất cả bộ lọc">
+        × Xoá lọc
+      </button>
+
       <span class="spacer"></span>
 
-      <button class="btn" @click="showDuplicateDialog = true">
-        ⊜ Trùng lặp
-        <span v-if="duplicateTotal > 0" class="btn-badge">{{ duplicateTotal }}</span>
-      </button>
-      <button class="btn" @click="showCandidateDialog = true">
-        💡 Gợi ý KH Cha
-        <span v-if="candidateCount > 0" class="btn-badge">{{ candidateCount }}</span>
-      </button>
-      <button
-        class="btn"
-        :disabled="runningDetector"
-        title="Chạy detector ngay (không đợi cron 02:30 UTC). Cần admin/owner."
-        @click="onRunDetector"
-      >{{ runningDetector ? '🔄 Đang quét…' : '🔄 Quét ngay' }}</button>
-      <button class="btn">⬇ Xuất</button>
-      <v-menu :close-on-content-click="false">
+      <!-- 2026-06-03: gom Trùng lặp/Gợi ý Cha/Quét/Xuất/Cột vào 1 nút ⚙ Công cụ -->
+      <v-menu :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: act }">
-          <button v-bind="act" class="btn" title="Bật/tắt cột tuỳ chọn">⚙ Cột</button>
+          <button v-bind="act" class="btn" title="Công cụ dữ liệu & tùy chọn cột">
+            ⚙ Công cụ
+            <span v-if="toolsBadgeTotal > 0" class="btn-badge">{{ toolsBadgeTotal }}</span>
+          </button>
         </template>
-        <v-list density="compact" min-width="320">
-          <v-list-subheader>Cột KH Cha — aggregate</v-list-subheader>
+        <v-list density="compact" min-width="300">
+          <v-list-subheader>Công cụ dữ liệu</v-list-subheader>
+          <v-list-item @click="showDuplicateDialog = true">
+            <template #prepend><span class="tools-emoji">⊜</span></template>
+            <v-list-item-title>Quét khách trùng lặp</v-list-item-title>
+            <template #append><span v-if="duplicateTotal > 0" class="btn-badge">{{ duplicateTotal }}</span></template>
+          </v-list-item>
+          <v-list-item @click="showCandidateDialog = true">
+            <template #prepend><span class="tools-emoji">💡</span></template>
+            <v-list-item-title>Gợi ý gộp KH Cha</v-list-item-title>
+            <template #append><span v-if="candidateCount > 0" class="btn-badge">{{ candidateCount }}</span></template>
+          </v-list-item>
+          <v-list-item :disabled="runningDetector" @click="onRunDetector">
+            <template #prepend><span class="tools-emoji">🔄</span></template>
+            <v-list-item-title>{{ runningDetector ? 'Đang quét…' : 'Quét lại ngay' }}</v-list-item-title>
+          </v-list-item>
+          <v-list-item @click="onExport">
+            <template #prepend><span class="tools-emoji">⬇</span></template>
+            <v-list-item-title>Xuất danh sách</v-list-item-title>
+          </v-list-item>
+          <v-divider class="my-1" />
+          <v-list-subheader>Cột hiển thị — KH Cha</v-list-subheader>
           <v-list-item v-for="c in OPTIONAL_COLUMNS" :key="c.key" @click="toggleColumn(c.key)">
             <template #prepend>
               <v-icon size="18" :color="visibleCols[c.key] ? 'primary' : ''">
@@ -77,10 +94,8 @@
               </v-icon>
             </template>
             <v-list-item-title>{{ c.label }}</v-list-item-title>
-            <v-list-item-subtitle v-if="c.hint" class="text-caption">{{ c.hint }}</v-list-item-subtitle>
           </v-list-item>
-          <v-divider class="my-1" />
-          <v-list-subheader>Cột KH Con — per-Friend (mở ▸ để xem)</v-list-subheader>
+          <v-list-subheader>Cột hiển thị — KH Con (mở ▸)</v-list-subheader>
           <v-list-item v-for="c in CHILD_OPTIONAL_COLUMNS" :key="c.key" @click="toggleChildColumn(c.key)">
             <template #prepend>
               <v-icon size="18" :color="visibleChildCols[c.key] ? 'primary' : ''">
@@ -88,7 +103,6 @@
               </v-icon>
             </template>
             <v-list-item-title>{{ c.label }}</v-list-item-title>
-            <v-list-item-subtitle v-if="c.hint" class="text-caption">{{ c.hint }}</v-list-item-subtitle>
           </v-list-item>
         </v-list>
       </v-menu>
@@ -99,52 +113,37 @@
           :class="{ active: viewMode === 'm1' }"
           @click="setViewMode('m1')"
           title="Bảng đầy đủ — click row mở Friend rows inline"
-        >📋 Bảng đầy đủ</button>
+        >📋 Bảng</button>
         <button
           class="view-btn"
           :class="{ active: viewMode === 'm2' }"
           @click="setViewMode('m2')"
           title="Chi tiết bên — click row mở panel chi tiết bên phải"
-        >🔍 Chi tiết bên</button>
+        >🔍 Chi tiết</button>
       </div>
       <button class="btn btn-primary" @click="openCreate">+ Thêm KH</button>
     </div>
 
-    <!-- ════════ Toolbar Row 2: date range + advanced filter toggle ════════ -->
-    <div class="toolbar toolbar-secondary">
-      <span class="row2-label">📅 Tương tác:</span>
-      <input type="date" v-model="filters.dateFrom" class="date-input" @change="fetchContacts" />
-      <span class="date-separator">→</span>
-      <input type="date" v-model="filters.dateTo" class="date-input" @change="fetchContacts" />
-      <button class="btn-advanced" :class="{ on: showAdvanced }" @click="showAdvanced = !showAdvanced">
-        {{ showAdvanced ? '▾' : '▸' }} Lọc nâng cao
-        <span v-if="advancedActiveCount > 0" class="btn-badge">{{ advancedActiveCount }}</span>
-      </button>
-      <span class="spacer"></span>
-      <button v-if="hasAnyFilter" class="btn-clear" @click="clearAllFilters" title="Xoá tất cả bộ lọc">
-        × Xoá lọc
-      </button>
-    </div>
-
-    <!-- Advanced filter panel (collapsible) -->
+    <!-- Advanced filter panel (collapsible) — 2026-06-03 fix UI gọn -->
     <div v-if="showAdvanced" class="advanced-panel">
+      <div class="adv-panel-title">🔎 Bộ lọc nâng cao</div>
       <div class="adv-group">
         <label>Trạng thái Zalo</label>
         <select v-model="filters.hasZalo" @change="fetchContacts">
           <option value="">Tất cả</option>
-          <option value="true">✓ Có Zalo</option>
-          <option value="false">✗ Không có Zalo</option>
-          <option value="unknown">? Chưa tra</option>
+          <option value="true">🟢 Có Zalo</option>
+          <option value="false">🔴 Không tìm thấy</option>
+          <option value="unknown">⚪ Chưa tìm</option>
         </select>
       </div>
       <div class="adv-group">
-        <label>Trạng thái KB Zalo (per-nick)</label>
+        <label>Trạng thái kết bạn (per-nick)</label>
         <select v-model="filters.relationshipKindAny" @change="fetchContacts">
           <option value="">Tất cả</option>
-          <option value="friend">✓ Đã KB</option>
-          <option value="pending_friend">… Đang mời</option>
-          <option value="chatting_stranger">💬 Chat lạ</option>
-          <option value="ghost">🚫 Ngắt</option>
+          <option value="friend">🟢 Đã kết bạn</option>
+          <option value="pending_friend">🟡 Đang mời</option>
+          <option value="chatting_stranger">🔵 Chat lạ</option>
+          <option value="ghost">⚪ Đã ngắt</option>
         </select>
       </div>
       <div class="adv-group">
@@ -154,25 +153,35 @@
           <option value="true">≥ 2 nick chăm</option>
         </select>
       </div>
-      <div class="adv-group">
+      <div class="adv-group adv-inline">
         <label>Lead score</label>
-        <input type="number" v-model.number="filters.scoreMin" min="0" max="100" placeholder="Min" class="score-input-mini" @change="fetchContacts" />
-        <span class="dash">—</span>
-        <input type="number" v-model.number="filters.scoreMax" min="0" max="100" placeholder="Max" class="score-input-mini" @change="fetchContacts" />
+        <div class="adv-row">
+          <input type="number" v-model.number="filters.scoreMin" min="0" max="100" placeholder="Min" class="score-input-mini" @change="fetchContacts" />
+          <span class="dash">—</span>
+          <input type="number" v-model.number="filters.scoreMax" min="0" max="100" placeholder="Max" class="score-input-mini" @change="fetchContacts" />
+        </div>
+      </div>
+      <div class="adv-group adv-inline">
+        <label>📅 Khoảng tương tác</label>
+        <div class="adv-row">
+          <input type="date" v-model="filters.dateFrom" class="date-input" @change="fetchContacts" />
+          <span class="dash">→</span>
+          <input type="date" v-model="filters.dateTo" class="date-input" @change="fetchContacts" />
+        </div>
       </div>
     </div>
 
-    <!-- ════════ Stats row ════════ -->
+    <!-- ════════ Stats row (2026-06-03: fix fallback ?? 0 + bấm để lọc) ════════ -->
     <div class="stats-row">
-      <div class="stat-box">📋 Tổng KH: <span class="stat-num">{{ stats.total ?? total }}</span></div>
-      <div class="stat-box">🟢 Có nick chăm: <span class="stat-num">{{ stats.withNick }}</span></div>
-      <div class="stat-box">🔥 Tương tác 7d: <span class="stat-num">{{ stats.activeRecently ?? 0 }}</span></div>
-      <div class="stat-box">🆕 Mới hôm nay: <span class="stat-num">{{ stats.newToday ?? 0 }}</span></div>
-      <div class="stat-box">📅 Lịch hẹn ≤7d: <span class="stat-num">{{ stats.upcomingApt ?? 0 }}</span></div>
-      <div class="stat-box">⭐ Score ≥50: <span class="stat-num">{{ stats.highScore ?? 0 }}</span></div>
-      <div class="stat-box">⚠ Đa nick (≥3): <span class="stat-num">{{ stats.multiClaim }}</span></div>
-      <div class="stat-box">🚫 Revoked: <span class="stat-num">{{ stats.revoked }}</span></div>
-      <div class="stat-box">📵 No Zalo: <span class="stat-num">{{ stats.noZalo }}</span></div>
+      <div
+        v-for="s in statBoxes" :key="s.key"
+        class="stat-box"
+        :class="{ clickable: !!s.filter, active: s.filter && activeStatKey === s.key }"
+        :title="s.filter ? 'Bấm để lọc theo ' + s.label : ''"
+        @click="s.filter && toggleStatFilter(s)"
+      >
+        {{ s.icon }} {{ s.label }}: <span class="stat-num">{{ s.value ?? 0 }}</span>
+      </div>
     </div>
 
     <!-- ════════ Master/child table + Detail pane (Phase Dual View 2026-05-28) ════════ -->
@@ -597,6 +606,12 @@
       @saved="onProfileSaved"
       @automation="onAutomation"
     />
+    <!-- Thêm KH mới — cùng component, mode create (style Smax đồng nhất) -->
+    <CustomerProfileDialog
+      v-model="showCreateProfile"
+      mode="create"
+      @created="onContactCreated"
+    />
 
     <!-- Friend status picker dialog (per-pair status) -->
     <div v-if="statusEditTarget" class="status-picker-overlay" @click.self="statusEditTarget = null">
@@ -736,6 +751,12 @@ function openProfile(c: Contact) {
   showProfileDialog.value = true;
 }
 function onProfileSaved() { fetchContacts(); }
+// 2026-06-03: form Thêm KH dùng chính CustomerProfileDialog mode='create' (đồng nhất style Smax)
+const showCreateProfile = ref(false);
+function onContactCreated(_c: { id: string; fullName: string | null; phone: string | null }) {
+  fetchContacts();
+  loadStats();
+}
 
 function onContactQuickCreated(_c: { id: string; fullName: string | null; phone: string | null }) {
   // Reload list ngay để KH mới xuất hiện đầu danh sách
@@ -756,6 +777,9 @@ function setViewMode(m: 'm1' | 'm2') {
   }
 }
 const candidateCount = ref(0);
+// 2026-06-03: badge tổng trên nút ⚙ Công cụ = số cụm trùng + gợi ý KH Cha (việc cần admin xử lý)
+const toolsBadgeTotal = computed(() => (duplicateTotal.value || 0) + (candidateCount.value || 0));
+function onExport() { toast.warning('Xuất danh sách: chưa implement'); }
 async function fetchCandidateCount() {
   try {
     const res = await api.get<{ candidates: unknown[] }>('/contacts/parent-candidates');
@@ -879,6 +903,39 @@ async function loadStats() {
     console.error('[ContactsView] stats fetch failed:', err);
     stats.value = {};
   }
+}
+
+// ── Stats bấm-để-lọc (2026-06-03) ──────────────────────────────────────────
+// Mỗi ô có value (luôn fallback 0 — fix lỗi "---" khi chưa load) + filter optional.
+// Bấm ô có filter → áp bộ lọc tương ứng, bấm lại → bỏ. Ô tổng quan (Tổng KH,
+// Tương tác, Mới hôm nay) chỉ hiển thị, không lọc.
+interface StatBox { key: string; icon: string; label: string; value: number | undefined; filter?: () => void }
+const activeStatKey = ref<string | null>(null);
+const statBoxes = computed<StatBox[]>(() => [
+  { key: 'total', icon: '📋', label: 'Tổng KH', value: stats.value.total ?? total.value },
+  { key: 'withNick', icon: '🟢', label: 'Có nick chăm', value: stats.value.withNick },
+  { key: 'active7d', icon: '🔥', label: 'Tương tác 7d', value: stats.value.activeRecently },
+  { key: 'newToday', icon: '🆕', label: 'Mới hôm nay', value: stats.value.newToday },
+  { key: 'highScore', icon: '⭐', label: 'Score ≥50', value: stats.value.highScore,
+    filter: () => { filters.scoreMin = 50; filters.scoreMax = null; } },
+  { key: 'multiClaim', icon: '⚠', label: 'Đa nick (≥3)', value: stats.value.multiClaim,
+    filter: () => { filters.multiNick = 'true'; } },
+  { key: 'noZalo', icon: '📵', label: 'No Zalo', value: stats.value.noZalo,
+    filter: () => { filters.hasZalo = 'false'; } },
+]);
+function toggleStatFilter(s: StatBox) {
+  if (activeStatKey.value === s.key) {
+    // Bỏ lọc: reset đúng field ô đó set
+    activeStatKey.value = null;
+    if (s.key === 'highScore') { filters.scoreMin = null; filters.scoreMax = null; }
+    if (s.key === 'multiClaim') filters.multiNick = '';
+    if (s.key === 'noZalo') filters.hasZalo = '';
+  } else {
+    activeStatKey.value = s.key;
+    s.filter?.();
+  }
+  pagination.page = 1;
+  fetchContacts();
 }
 
 let searchTimeout: ReturnType<typeof setTimeout>;
@@ -1200,9 +1257,9 @@ function ageOf(c: Contact): number | null {
 // (Stats giờ load từ /contacts/stats endpoint — xem `const stats` ở phần advanced filter
 // state. Computed fallback cũ đã thay bằng ref reactive update qua loadStats.)
 
+// 2026-06-03: nút "+ Thêm KH" mở CustomerProfileDialog mode='create' (style Smax đồng nhất)
 function openCreate() {
-  selectedContact.value = null;
-  showDialog.value = true;
+  showCreateProfile.value = true;
 }
 function openDetail(c: Contact) {
   // Phase Dual View 2026-05-28:
@@ -1555,39 +1612,50 @@ watch(
 .btn-clear:hover { color: var(--smax-error); border-color: var(--smax-error); }
 
 /* Advanced panel: collapse mở dưới row 2, grid 4 cột group filter */
+/* 2026-06-03 fix: panel lọc nâng cao gọn — grid 4 cột đều, mỗi group 1 ô,
+   label thường (không uppercase rời rạc), date không full-width thừa chỗ. */
 .advanced-panel {
-  background: var(--smax-bg);
+  background: var(--smax-grey-50);
   border: 1px solid var(--smax-grey-200);
   border-radius: 7px;
-  padding: 11px 13px;
+  padding: 12px 14px;
   margin-bottom: 9px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 11px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px 14px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 .adv-group {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--smax-bg);
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 6px;
+  padding: 8px 10px;
 }
 .adv-group label {
-  display: block; width: 100%;
   font-size: 11px; font-weight: 600;
   color: var(--smax-grey-700);
-  text-transform: uppercase; letter-spacing: 0.3px;
-  margin-bottom: 4px;
+  letter-spacing: 0.1px;
 }
 .adv-group select,
-.score-input-mini {
+.score-input-mini,
+.adv-group .date-input {
   padding: 6px 9px;
   border: 1px solid var(--smax-grey-300);
   border-radius: 6px;
   background: var(--smax-bg);
   font-size: 12.5px;
   font-family: inherit;
-  flex: 1; min-width: 0;
+  width: 100%;
 }
-.score-input-mini { max-width: 80px; text-align: center; }
-.adv-group .dash { color: var(--smax-grey-700); font-size: 13px; }
+/* hàng khoảng tương tác + lead score: 2 input cạnh nhau gọn */
+.adv-group.adv-inline { flex-direction: column; }
+.adv-inline .adv-row { display: flex; align-items: center; gap: 6px; }
+.adv-inline .date-input, .score-input-mini { flex: 1; min-width: 0; }
+.score-input-mini { text-align: center; }
+.adv-group .dash { color: var(--smax-grey-400); font-size: 13px; flex-shrink: 0; }
+/* tiêu đề panel */
+.adv-panel-title { grid-column: 1 / -1; font-size: 11px; font-weight: 700; color: var(--smax-grey-700); text-transform: uppercase; letter-spacing: .4px; margin-bottom: -2px; }
 .toggle-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--smax-grey-700); cursor: pointer; padding: 6px 10px; border-radius: 6px; }
 .toggle-inline:hover { background: rgba(0,0,0,0.04); }
 .toggle-inline input { cursor: pointer; }
@@ -1643,10 +1711,17 @@ watch(
 .stat-box {
   display: flex; align-items: center; gap: 4px;
   font-size: 12.5px;
-  padding: 1px 12px;
+  padding: 3px 12px;
   border-right: 1px solid var(--smax-grey-100);
+  border-radius: 5px;
 }
 .stat-box:last-child { border-right: none; }
+.stat-box.clickable { cursor: pointer; transition: background .12s; }
+.stat-box.clickable:hover { background: var(--smax-grey-100); }
+.stat-box.active { background: var(--smax-primary-soft); }
+.stat-box.active .stat-num { color: var(--smax-primary); }
+/* 2026-06-03: menu ⚙ Công cụ + lọc tương tác trong advanced */
+.tools-emoji { font-size: 16px; width: 22px; display: inline-block; text-align: center; }
 .stat-num {
   font-weight: 700;
   color: var(--smax-primary);

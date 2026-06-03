@@ -373,6 +373,12 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const user = request.user!;
       const body = request.body as Record<string, any>;
 
+      // Hồ sơ KH tổng (form Thêm KH style Smax 2026-06-03): demographic + multi-phone.
+      const createBirthYear = (() => {
+        if (body.birthYear === undefined || body.birthYear === null || body.birthYear === '') return undefined;
+        const by = typeof body.birthYear === 'string' ? parseInt(body.birthYear, 10) : body.birthYear;
+        return Number.isFinite(by) && by > 1900 && by < 2100 ? by : undefined;
+      })();
       const contact = await prisma.contact.create({
         data: {
           orgId: user.orgId,
@@ -390,6 +396,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           notes: body.notes,
           tags: body.tags ?? [],
           metadata: body.metadata ?? {},
+          gender: body.gender || undefined,
+          occupation: body.occupation || undefined,
+          addressLine: body.addressLine || undefined,
+          birthYear: createBirthYear,
+          phonesExtra: Array.isArray(body.phonesExtra)
+            ? body.phonesExtra.filter((p: any) => p && typeof p.phone === 'string' && p.phone.trim())
+            : undefined,
         },
       });
 
