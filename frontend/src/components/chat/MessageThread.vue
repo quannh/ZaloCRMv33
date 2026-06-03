@@ -25,19 +25,31 @@
 
       <!-- ════════ Chat header (Smax-style — 2 rows) ════════ -->
       <header class="chat-header">
-        <Avatar
-          :src="headerAvatarSrc"
-          :name="headerName"
-          :size="46"
-          :gender="contactGender"
-          :is-group="conversation.threadType === 'group'"
-          :gradient-seed="conversation.id"
-        />
+        <div
+          class="ch-avatar-wrap"
+          :class="{ clickable: canClickHeader }"
+          :title="canClickHeader ? 'Xem thông tin KH' : ''"
+          @click="onHeaderAvatarClick"
+        >
+          <Avatar
+            :src="headerAvatarSrc"
+            :name="headerName"
+            :size="46"
+            :gender="contactGender"
+            :is-group="conversation.threadType === 'group'"
+            :gradient-seed="conversation.id"
+          />
+        </div>
 
         <div class="ch-info">
           <!-- Row 1: Name | Gender/Group icon to + Care status -->
           <div class="ch-row-1">
-            <div class="ch-name" :title="headerName">{{ headerName }}</div>
+            <div
+              class="ch-name"
+              :class="{ clickable: canClickHeader }"
+              :title="canClickHeader ? `Xem thông tin KH: ${headerName}` : headerName"
+              @click="onHeaderAvatarClick"
+            >{{ headerName }}</div>
             <!-- M55 2026-05-30: Chip "Cùng chăm N sale" cạnh tên KH, hiện khi >=2 sale chăm -->
             <span
               v-if="cungChamCount >= 2"
@@ -163,18 +175,26 @@
           <!-- Smart friendship button: state-aware -->
           <!-- Đã kết bạn: hover hiện thêm nút Huỷ kết bạn (destructive secondary) -->
           <div v-if="friendshipState === 'friend'" class="friend-hover-group">
-            <button class="btn-action btn-friend-already" :title="friendshipTitle" disabled>
-              <span class="ic">✓</span> Đã KB
-              <span v-if="friendDaysLabel" class="sub-meta">{{ friendDaysLabel }}</span>
-            </button>
-            <button
-              class="btn-action btn-remove-friend"
-              title="Huỷ kết bạn với KH (Zalo unfriend)"
-              :disabled="actionLoading"
-              @click="onRemoveFriend"
-            >
-              <span class="ic">✗</span> Huỷ KB
-            </button>
+            <v-tooltip :text="friendshipTitle" location="bottom">
+              <template #activator="{ props: tipProps }">
+                <button v-bind="tipProps" class="btn-action btn-friend-already" disabled>
+                  <span class="ic">✓</span> Đã KB
+                  <span v-if="friendDaysLabel" class="sub-meta">{{ friendDaysLabel }}</span>
+                </button>
+              </template>
+            </v-tooltip>
+            <v-tooltip text="Huỷ kết bạn với KH (Zalo unfriend)" location="bottom">
+              <template #activator="{ props: tipProps }">
+                <button
+                  v-bind="tipProps"
+                  class="btn-action btn-remove-friend"
+                  :disabled="actionLoading"
+                  @click="onRemoveFriend"
+                >
+                  <span class="ic">✗</span> Huỷ KB
+                </button>
+              </template>
+            </v-tooltip>
           </div>
           <!-- Sale đã gửi mời, đợi KH accept: primary "Đã mời" + secondary "Thu hồi" -->
           <template v-else-if="friendshipState === 'pending_sent' || friendshipState === 'pending_friend'">
@@ -1359,6 +1379,21 @@ function onSenderClick(msg: Message) {
   userInfoDialog.value = true;
 }
 
+// 2026-06-03: Click avatar/tên trong header cột 3 → mở dialog user info KH
+// (chỉ áp 1-1 user thread, group bỏ qua vì không có 1 contact duy nhất).
+const canClickHeader = computed(() => {
+  const conv = props.conversation;
+  return !!(conv && conv.threadType !== 'group' && conv.contact?.zaloUid);
+});
+function onHeaderAvatarClick() {
+  const conv = props.conversation;
+  if (!conv || conv.threadType === 'group') return;
+  const uid = conv.contact?.zaloUid;
+  if (!uid) return;
+  userInfoUid.value = uid;
+  userInfoDialog.value = true;
+}
+
 // ── Reminder notice (inline timeline event) ─────────────────────────────────
 // Zalo gửi 2 row khi tạo reminder: notice "X tạo nhắc hẹn mới Y - HH:mm" (action=msginfo.actionlist)
 // và card (action=show.profile). Notice không nên là bubble — render centered inline event.
@@ -2421,6 +2456,13 @@ watch(() => props.editingMessage?.id, async (id) => {
   flex-shrink: 0;
 }
 
+/* Click avatar + tên header → mở dialog user info */
+.ch-avatar-wrap { display: inline-flex; border-radius: 50%; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.ch-avatar-wrap.clickable { cursor: pointer; }
+.ch-avatar-wrap.clickable:hover { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18); }
+.ch-name.clickable { cursor: pointer; transition: color 0.12s ease; }
+.ch-name.clickable:hover { color: var(--smax-primary, #3b82f6); }
+
 .ch-info {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column; gap: 5px;
@@ -2758,11 +2800,11 @@ watch(() => props.editingMessage?.id, async (id) => {
 }
 .btn-remove-friend {
   position: absolute;
-  top: calc(100% + 4px); /* dưới Đã KB 4px */
+  top: calc(100% + 6px); /* dưới Đã KB 6px — tách hẳn khỏi row 1 */
   left: 0;
-  background: rgba(239, 68, 68, 0.10);
+  background: #fff5f5;
   color: #b91c1c;
-  border-color: rgba(239, 68, 68, 0.35);
+  border-color: rgba(239, 68, 68, 0.4);
   font-weight: 500;
   white-space: nowrap;
   opacity: 0;
@@ -2770,7 +2812,8 @@ watch(() => props.editingMessage?.id, async (id) => {
   transform: translateY(-4px);
   transition: opacity 0.16s ease, transform 0.18s ease;
   z-index: 5;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  /* Shadow chỉ tỏa XUỐNG DƯỚI (offset-y dương + spread âm) → KHÔNG lan lên đè row 1 */
+  box-shadow: 0 6px 12px -4px rgba(185, 28, 28, 0.18);
 }
 .friend-hover-group:hover .btn-remove-friend,
 .btn-remove-friend:focus-visible {
