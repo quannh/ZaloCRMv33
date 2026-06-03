@@ -154,12 +154,18 @@ const showBadge = computed(() => {
 const labelData = computed(() => {
   if (!badgeKind.value) return null;
   const meta = props.message.metadata?.sender;
-  // Ưu tiên metadata.sender.name → repliedBy.fullName → senderName fallback
-  const name =
-    meta?.name ??
-    props.message.repliedBy?.fullName ??
-    props.message.senderName ??
-    'Sale';
+  // Ưu tiên: metadata.sender.name (M11 explicit) → repliedBy.fullName (user CRM)
+  // → senderName (Zalo dName fallback).
+  //
+  // Fix 2026-06-03: tin CŨ trước commit M11 7f968e9 có metadata=NULL, senderName
+  // mang giá trị displayName của NICK (vd "Thành Phạm HS Trợ Lý") thay vì tên
+  // sale thật. → Phải ưu tiên repliedBy.fullName (relation tới User CRM) TRƯỚC
+  // senderName để tin cũ vẫn hiện đúng tên sale. Tin mới đã có metadata.name.
+  // Áp DỤNG CHỈ cho variant user_crm (sale gõ); bot_* dùng meta.name làm tên
+  // sequence/AI/system nên không hoán vị.
+  const name = badgeKind.value === 'user_crm'
+    ? (meta?.name ?? props.message.repliedBy?.fullName ?? props.message.senderName ?? 'Sale')
+    : (meta?.name ?? props.message.senderName ?? 'Sale');
 
   switch (badgeKind.value) {
     case 'user_crm':
