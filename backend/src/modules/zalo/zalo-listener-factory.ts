@@ -250,6 +250,51 @@ async function resolveGroupInfo(api: any, groupId: string): Promise<ResolvedGrou
   }
 }
 
+/**
+ * Extract Zalo mentions từ message.data (Anh chốt 2026-06-03).
+ *
+ * SDK trả mention metadata qua 2 kênh — em thử cả 2:
+ *   #1 message.data.mentions — TGroupMessage trực tiếp (group only),
+ *      shape sẵn [{uid, pos, len, type}]
+ *   #2 message.data.propertyExt.ext — JSON stringified bởi server Zalo,
+ *      shape {"mentions":[{uid, pos, len, type}]}. Đây là nơi server đóng
+ *      gói thực sự (xem audit workflow). Có thể bị propertyExt là object
+ *      sẵn (đã parse) hoặc string.
+ *
+ * Trả undefined nếu không có mentions (user 1-1, hoặc tin không tag ai).
+ */
+function extractZaloMentions(
+  messageData: any,
+): Array<{ uid: string; pos: number; len: number; type: 0 | 1 }> | undefined {
+  // Kênh #1: direct array trên TGroupMessage
+  const direct = messageData?.mentions;
+  if (Array.isArray(direct) && direct.length > 0) {
+    return direct.map((m: any) => ({
+      uid: String(m.uid ?? ''),
+      pos: Number(m.pos ?? 0),
+      len: Number(m.len ?? 0),
+      type: (m.type === 1 ? 1 : 0) as 0 | 1,
+    })).filter((m) => m.uid && m.len > 0);
+  }
+  // Kênh #2: propertyExt.ext có thể là object hoặc stringified
+  try {
+    let ext = messageData?.propertyExt?.ext;
+    if (typeof ext === 'string') ext = JSON.parse(ext);
+    const ms = ext?.mentions;
+    if (Array.isArray(ms) && ms.length > 0) {
+      return ms.map((m: any) => ({
+        uid: String(m.uid ?? ''),
+        pos: Number(m.pos ?? 0),
+        len: Number(m.len ?? 0),
+        type: (m.type === 1 ? 1 : 0) as 0 | 1,
+      })).filter((m) => m.uid && m.len > 0);
+    }
+  } catch {
+    // ignore parse error
+  }
+  return undefined;
+}
+
 export interface ListenerContext {
   accountId: string;
   api: any;
@@ -548,6 +593,13 @@ export function attachZaloListener(ctx: ListenerContext): void {
         albumKey: album.albumKey,
         albumIndex: album.albumIndex,
         albumTotal: album.albumTotal,
+        // Anh chốt 2026-06-03 — capture mentions từ TGroupMessage qua 2 kênh:
+        //   #1 message.data.mentions (TGroupMessage trực tiếp, group only)
+        //   #2 message.data.propertyExt.ext JSON stringified (server Zalo
+        //      đóng gói tại đây, fallback nếu kênh #1 rỗng)
+        // SDK: type TMention = { uid, pos, len, type }
+        // (zca-js/dist/models/Message.d.ts:65-70)
+        mentions: extractZaloMentions(message.data),
       });
 
       if (result) {
@@ -738,6 +790,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
           albumIndex: album.albumIndex,
           albumTotal: album.albumTotal,
           isBackfill: true,
+          // Anh chốt 2026-06-03 — mentions cho old_messages backfill
+          mentions: extractZaloMentions(message.data),
         });
 
         if (result) {

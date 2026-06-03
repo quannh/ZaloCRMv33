@@ -45,6 +45,9 @@ export interface IncomingMessage {
   albumIndex?: number | null;
   albumTotal?: number | null;
   isBackfill?: boolean;     // true for old_messages / sync backfill — skip automations
+  // Anh chốt 2026-06-03 — Persist Zalo SDK TGroupMessage.mentions
+  // Shape: [{ uid, pos, len, type }] — chỉ group có; user 1-1 null.
+  mentions?: Array<{ uid: string; pos: number; len: number; type: 0 | 1 }>;
 }
 
 export interface HandleMessageResult {
@@ -353,6 +356,11 @@ export async function handleIncomingMessage(
           ...(msg.isSelf && {
             sentVia: 'user_native',
             metadata: { sender: m11SenderMeta },
+          }),
+          // Anh chốt 2026-06-03: lưu mentions để FE render theo pos+len thay
+          // vì đoán regex. SDK chỉ trả mentions cho group; user 1-1 null.
+          ...(msg.mentions && msg.mentions.length > 0 && {
+            mentions: msg.mentions,
           }),
         },
       });

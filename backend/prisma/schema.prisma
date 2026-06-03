@@ -656,6 +656,14 @@ model Message {
   //   + M11 (2026-06-02): metadata.sender = { kind, name, detail?, sequenceId?, stepIdx? }
   isLocal             Boolean   @default(false) @map("is_local")
   metadata            Json?
+  // ── Mention metadata Anh chốt 2026-06-03 ──
+  // Persist Zalo SDK TGroupMessage.mentions để FE render chính xác theo
+  // pos+len thay vì đoán regex. Chỉ group message có mentions; user 1-1 null.
+  // Shape: [{ uid: string; pos: number; len: number; type: 0 | 1 }]
+  //   pos = vị trí ký tự @ trong content
+  //   len = độ dài full mention (kèm cả " - Hs Holding")
+  //   type = 0=user | 1=all (@all)
+  mentions            Json?
   // ── Luồng Mục Tiêu M10/M11 attribution 2026-06-01 ──
   // automationTaskId = BullMQ jobId (string, KHÔNG FK vì AutomationTask đã drop).
   // Pattern: `${triggerId}-${contactId}-${stepIdx}` (DASH, BullMQ v5 cấm `:` — POC 2026-06-01).

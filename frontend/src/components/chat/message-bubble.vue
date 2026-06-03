@@ -508,15 +508,57 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function highlightText(raw: string): string {
+/**
+ * Apply mentions theo pos+len từ Zalo SDK (Anh chốt 2026-06-03 Lớp 2).
+ * Pos là vị trí byte (UTF-8) trong raw text; len là độ dài full mention bao
+ * gồm cả ký tự @ + tên đầy đủ (vd "@Trung Trường - Hs Holding" = len 27).
+ *
+ * Algorithm:
+ *  1. Sort mentions theo pos tăng dần để xử lý từ đầu chuỗi.
+ *  2. Cắt text thành các segment: [plain trước mention][mention][plain sau].
+ *  3. Escape HTML từng segment riêng (KHÔNG escape cả chuỗi rồi cắt vì
+ *     escape làm dài chuỗi → pos shift sai).
+ *
+ * Lưu ý UTF-8: Zalo dùng byte position, Js string là UTF-16. Với tin tiếng
+ * Việt + emoji có thể lệch. Thử dùng string.substring trước, nếu sai shift
+ * sẽ fix lần sau bằng TextEncoder/Decoder.
+ */
+function applyMentionsFormat(
+  raw: string,
+  mentions: Array<{ uid: string; pos: number; len: number; type: 0 | 1 }>,
+): string {
+  if (!mentions || mentions.length === 0) return highlightTextRegex(raw);
+  const sorted = [...mentions].sort((a, b) => a.pos - b.pos);
+  let out = '';
+  let cursor = 0;
+  for (const m of sorted) {
+    if (m.pos < cursor) continue; // overlap → skip
+    // Plain text trước mention
+    if (m.pos > cursor) {
+      out += escapeHtml(raw.substring(cursor, m.pos));
+    }
+    // Mention chunk
+    const chunk = raw.substring(m.pos, m.pos + m.len);
+    out += `<span class="mention" data-uid="${m.uid}">${escapeHtml(chunk)}</span>`;
+    cursor = m.pos + m.len;
+  }
+  // Plain text còn lại
+  if (cursor < raw.length) {
+    out += escapeHtml(raw.substring(cursor));
+  }
+  // Auto-link + linebreak (vẫn áp dụng cho mọi segment)
+  out = out.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" class="link">$1</a>');
+  out = out.replace(/\r?\n/g, '<br>');
+  return out;
+}
+
+/**
+ * Fallback regex cho tin CŨ chưa có mentions JSONB (trước migration
+ * 20260603074923_add_message_mentions). Pattern hỗ trợ separator " - ".
+ */
+function highlightTextRegex(raw: string): string {
   if (!raw) return '';
   let s = escapeHtml(raw);
-  // Fix 2026-06-03 (Anh báo): tên có separator " - " bị cắt cho mention.
-  //   "@Trung Trường - Hs Holding" trước fix chỉ bôi "@Trung Trường", phần
-  //   " - Hs Holding" rớt plain. Regex mới hỗ trợ separator dash/en-dash/em-dash.
-  // Pattern: @ + 1-3 chữ hoa + (optional " - " + 1-3 chữ hoa nữa).
-  //   Vẫn ràng buộc bắt đầu chữ hoa để loại từ thường tiếng Việt (vd "thể"/"ơi").
-  // Character class bỏ '-' vì giờ '-' chỉ dùng làm separator.
   s = s.replace(
     /@(\p{Lu}[\p{L}0-9._]*(?:\s\p{Lu}[\p{L}0-9._]*){0,2}(?:\s[-–—]\s\p{Lu}[\p{L}0-9._]*(?:\s\p{Lu}[\p{L}0-9._]*){0,2})?)/gu,
     '<span class="mention">@$1</span>',
@@ -526,8 +568,18 @@ function highlightText(raw: string): string {
   return s;
 }
 
+function highlightText(raw: string): string {
+  return highlightTextRegex(raw);
+}
+
 const formattedText = computed(() => {
   const raw = parseDisplayContent(props.message.content);
+  // Anh chốt 2026-06-03: ưu tiên mentions từ Zalo SDK (pos+len chính xác
+  // 100%). Tin cũ trước migration không có mentions → fallback regex.
+  const msgMentions = (props.message as any).mentions;
+  if (Array.isArray(msgMentions) && msgMentions.length > 0) {
+    return applyMentionsFormat(raw, msgMentions);
+  }
   return highlightText(raw);
 });
 

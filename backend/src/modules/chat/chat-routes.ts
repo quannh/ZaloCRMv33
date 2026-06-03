@@ -824,6 +824,9 @@ export async function chatRoutes(app: FastifyInstance) {
           // (user/user_native/automation/ai_assistant/system). Thiếu field
           // này → fallback senderName='Staff' khiến badge hiện sai.
           sentVia: true,
+          // Anh chốt 2026-06-03 — mentions persist từ Zalo SDK:
+          // FE dùng pos+len bôi đúng 100%, không cần đoán regex.
+          mentions: true,
         },
       }),
       prisma.message.count({ where: { conversationId: id } }),

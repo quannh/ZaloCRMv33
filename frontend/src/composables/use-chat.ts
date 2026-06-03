@@ -150,6 +150,9 @@ export interface Message {
   repliedBy?: { id: string; fullName: string | null; email: string | null } | null;
   /** M55 — virtual chat indicators */
   isLocal?: boolean;
+  /** Anh chốt 2026-06-03 — Persist Zalo SDK TGroupMessage.mentions để FE
+   *  render mention theo pos+len thay vì đoán regex. Chỉ group có. */
+  mentions?: Array<{ uid: string; pos: number; len: number; type: 0 | 1 }> | null;
   // ── Luồng Mục Tiêu M11 source identity 2026-06-01 ──
   // sentVia enum: 'user' | 'user_native' | 'automation' | 'ai_assistant' | 'system'
   // Note (Anh chốt 2026-06-02): user_native vẫn lưu trong DB nhưng FE map về
