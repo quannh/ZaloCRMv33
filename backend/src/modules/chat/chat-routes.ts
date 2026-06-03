@@ -817,6 +817,11 @@ export async function chatRoutes(app: FastifyInstance) {
           // M55: isLocal/metadata cho virtual chat (đã có sẵn nhưng chưa expose)
           isLocal: true,
           metadata: true,
+          // M11 Source Badge (Anh chốt 2026-06-02) — fix 2026-06-03:
+          // FE MessageSourceBadge.vue cần sentVia để phân loại 5 variant
+          // (user/user_native/automation/ai_assistant/system). Thiếu field
+          // này → fallback senderName='Staff' khiến badge hiện sai.
+          sentVia: true,
         },
       }),
       prisma.message.count({ where: { conversationId: id } }),
