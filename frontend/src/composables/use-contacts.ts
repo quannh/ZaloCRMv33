@@ -203,6 +203,32 @@ export function messagePreview(
   return CONTENT_TYPE_LABEL[contentType ?? ''] ?? (contentType ?? '');
 }
 
+/**
+ * Tin nhắn cuối (lastInbound/OutboundPreview) đôi khi là raw JSON của sự kiện
+ * Zalo ({"title":"...","description":"...","href":"..."}) và thường BỊ CẮT 200 ký
+ * tự ở backend → JSON.parse fail. cleanPreview() trích title|text|description rồi
+ * mới qua messagePreview, tránh hiển thị code lạ cho sale (design-review 2026-06-03).
+ */
+export function cleanPreview(
+  raw: string | null | undefined,
+  contentType: string | null | undefined,
+  maxLen = 60,
+): string {
+  if (!raw) return messagePreview(raw, contentType, maxLen);
+  const s = raw.trim();
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try {
+      const obj = JSON.parse(s);
+      const picked = obj?.title || obj?.text || obj?.description || obj?.caption || obj?.content;
+      if (typeof picked === 'string' && picked.trim()) return messagePreview(picked, contentType, maxLen);
+    } catch { /* JSON truncate → regex bên dưới */ }
+    const m = s.match(/"(?:title|text|description|caption|content)"\s*:\s*"([^"]+)"/);
+    if (m && m[1]) return messagePreview(m[1], contentType, maxLen);
+    return messagePreview('', contentType, maxLen);
+  }
+  return messagePreview(raw, contentType, maxLen);
+}
+
 export interface AccountActivityItem {
   zaloAccountId: string;
   zaloAccount: {

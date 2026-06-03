@@ -353,7 +353,7 @@
                 <template v-if="contact.lastInboundAt">
                   <div class="cell-strong">{{ formatRecentDateTime(contact.lastInboundAt) }}</div>
                   <div class="cell-preview" :title="contact.lastInboundPreview || ''">
-                    {{ messagePreview(contact.lastInboundPreview, contact.lastInboundType ?? null) }}
+                    {{ cleanPreview(contact.lastInboundPreview, contact.lastInboundType ?? null) }}
                   </div>
                 </template>
                 <span v-else class="empty">—</span>
@@ -362,7 +362,7 @@
                 <template v-if="contact.lastOutboundAt">
                   <div class="cell-strong">{{ formatRecentDateTime(contact.lastOutboundAt) }}</div>
                   <div class="cell-preview" :title="contact.lastOutboundPreview || ''">
-                    {{ messagePreview(contact.lastOutboundPreview, contact.lastOutboundType ?? null) }}
+                    {{ cleanPreview(contact.lastOutboundPreview, contact.lastOutboundType ?? null) }}
                   </div>
                 </template>
                 <span v-else class="empty">—</span>
@@ -655,7 +655,7 @@ import { api } from '@/api';
 import {
   useContacts, useContactIntelligence,
   SOURCE_OPTIONS, STATUS_OPTIONS, GENDER_OPTIONS,
-  formatRecentDateTime, messagePreview,
+  formatRecentDateTime, cleanPreview,
 } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 import MobileContactView from '@/views/MobileContactView.vue';
@@ -1631,23 +1631,26 @@ watch(
   margin-left: 3px;
 }
 
-/* ════════ Stats ════════ */
+/* ════════ Stats ════════ (2026-06-03 design-review #5: nén gọn + vách ngăn nhẹ) */
 .stats-row {
-  display: flex; gap: 11px; flex-wrap: wrap;
+  display: flex; gap: 0; flex-wrap: wrap;
   background: var(--smax-bg);
-  padding: 9px 13px;
+  padding: 7px 6px;
   border-radius: 7px;
   margin-bottom: 9px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 .stat-box {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 13px;
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12.5px;
+  padding: 1px 12px;
+  border-right: 1px solid var(--smax-grey-100);
 }
+.stat-box:last-child { border-right: none; }
 .stat-num {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--smax-primary);
-  margin-left: 3px;
+  margin-left: 2px;
 }
 
 /* ════════ Table — responsive contained scroll ════════
@@ -1687,7 +1690,7 @@ watch(
 .smax-table > thead > tr > th {
   background: var(--smax-grey-50);
   border-bottom: 1px solid var(--smax-grey-200);
-  padding: 9px 11px;
+  padding: 9px 8px;
   text-align: left;
   font-weight: 600;
   color: var(--smax-grey-700);
@@ -1717,7 +1720,8 @@ watch(
   box-shadow: inset 3px 0 0 var(--smax-primary);
 }
 .smax-table td {
-  padding: 9px 11px;
+  /* 2026-06-03 design-review #2: giảm padding ngang 11→8 cho bảng đỡ chật ở 1366 */
+  padding: 9px 8px;
   vertical-align: top;
 }
 .w-32 { width: 32px; }

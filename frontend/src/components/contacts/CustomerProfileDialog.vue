@@ -163,11 +163,12 @@
                     <span class="k">Tag CRM</span>
                     <span class="v">
                       <div class="tag-edit">
+                        <span v-if="!form.tags.length" class="tag-empty-hint">Chưa gắn nhãn —</span>
                         <span v-for="(t, i) in form.tags" :key="i" class="crmtag editable">
                           {{ t }}<span class="rm" @click="form.tags.splice(i, 1)">✕</span>
                         </span>
                         <input
-                          v-model="newTag" class="tag-add-in" placeholder="+ tag"
+                          v-model="newTag" class="tag-add-in" placeholder="+ thêm nhãn"
                           @keydown.enter.prevent="addTag"
                         />
                       </div>
@@ -221,10 +222,10 @@
                   </div>
                   <div v-if="f.lastInboundPreview || f.lastOutboundPreview" class="s-r s-msg">
                     <span v-if="f.lastInboundPreview">
-                      <span class="who kh">KH</span> "{{ f.lastInboundPreview }}"
+                      <span class="who kh">KH</span> "{{ cleanPreview(f.lastInboundPreview, f.lastInboundType) }}"
                     </span>
                     <span v-else-if="f.lastOutboundPreview">
-                      <span class="who sale">Sale</span> "{{ f.lastOutboundPreview }}"
+                      <span class="who sale">Sale</span> "{{ cleanPreview(f.lastOutboundPreview, f.lastOutboundType) }}"
                     </span>
                   </div>
                 </div>
@@ -279,7 +280,7 @@ import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
-import { formatRecentDateTime } from '@/composables/use-contacts';
+import { formatRecentDateTime, cleanPreview } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
 const props = defineProps<{
@@ -635,16 +636,19 @@ function formatVnPhone(phone: string | null | undefined): string {
 .cpd-in { border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; font-size: 12.5px; font-family: inherit; text-align: right; background: transparent; font-weight: 600; width: 100%; max-width: 230px; color: var(--smax-text); }
 .cpd-in:hover { border-color: var(--smax-grey-300); background: #fff; }
 .cpd-in:focus { outline: none; border-color: var(--smax-primary); background: #fff; text-align: left; }
-.cpd-in-mini { max-width: 64px; }
-.phones-edit { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; width: 100%; }
-.phone-row { display: flex; gap: 5px; align-items: center; justify-content: flex-end; width: 100%; }
+.cpd-in-mini { max-width: 72px; text-align: left; flex-shrink: 0; }
+.phones-edit { display: flex; flex-direction: column; gap: 5px; align-items: stretch; width: 100%; }
+.phone-row { display: flex; gap: 6px; align-items: center; justify-content: flex-end; width: 100%; }
+/* số chính 1 mình → căn phải; số phụ: nhãn trái + số phải, không dồn cục */
+.phone-row .cpd-in:not(.cpd-in-mini) { flex: 1; min-width: 0; }
 .phone-rm { cursor: pointer; color: var(--smax-grey-400); font-size: 11px; }
 .add-phone { font-size: 11px; color: var(--smax-primary); cursor: pointer; font-weight: 600; }
 .assist-list { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .sa-chip { font-size: 11px; background: var(--smax-grey-100); border-radius: 9px; padding: 2px 8px; color: var(--smax-grey-700); }
 .tag-edit { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
 .crmtag.editable .rm { cursor: pointer; color: var(--smax-grey-400); margin-left: 4px; }
-.tag-add-in { border: 1px dashed var(--smax-grey-300); border-radius: 9px; padding: 1px 8px; font-size: 11px; width: 70px; font-family: inherit; }
+.tag-empty-hint { font-size: 11px; color: var(--smax-grey-400); font-style: italic; }
+.tag-add-in { border: 1px dashed var(--smax-grey-300); border-radius: 9px; padding: 1px 8px; font-size: 11px; width: 80px; font-family: inherit; }
 .tag-add-in:focus { outline: none; border-color: var(--smax-primary); }
 .cpd-aggnote { margin-top: 14px; font-size: 11.5px; color: var(--smax-grey-700); background: #f7f9fc; border: 1px solid var(--smax-grey-200); border-radius: 7px; padding: 9px 13px; }
 
