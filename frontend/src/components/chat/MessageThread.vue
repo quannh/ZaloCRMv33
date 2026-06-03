@@ -42,7 +42,7 @@
         </div>
 
         <div class="ch-info">
-          <!-- Row 1: Name | Gender/Group icon to + Care status -->
+          <!-- Row 1: TÊN KH ưu tiên + Gender icon (Anh chốt 2026-06-03 layout 3 dòng) -->
           <div class="ch-row-1">
             <div
               class="ch-name"
@@ -50,13 +50,6 @@
               :title="canClickHeader ? `Xem thông tin KH: ${headerName}` : headerName"
               @click="onHeaderAvatarClick"
             >{{ headerName }}</div>
-            <!-- M55 2026-05-30: Chip "Cùng chăm N sale" cạnh tên KH, hiện khi >=2 sale chăm -->
-            <span
-              v-if="cungChamCount >= 2"
-              class="ch-cung-cham-chip"
-              :title="cungChamTooltip"
-            >🤝 {{ cungChamCount }} sale</span>
-            <span class="ch-sep">|</span>
             <span class="ch-gender-chip" :class="genderChipClass" :title="genderTitle">
               <svg v-if="conversation.threadType === 'group'" class="gender-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
@@ -72,8 +65,15 @@
               </svg>
               <span class="gender-label">{{ genderLabel }}</span>
             </span>
-            <!-- Picker giai đoạn KH (Wave 3) — ghi statusId thay status enum legacy.
-                 Mission Fix 2 anh chốt 2026-05-30. -->
+          </div>
+
+          <!-- Row 2: Chips meta (Cùng-chăm + Giai đoạn + Phân loại) -->
+          <div class="ch-row-chips">
+            <span
+              v-if="cungChamCount >= 2"
+              class="ch-cung-cham-chip"
+              :title="cungChamTooltip"
+            >🤝 {{ cungChamCount }} sale</span>
             <ContactDealStageSelector
               v-if="conversation.contact"
               :contact-id="conversation.contact.id"
@@ -127,7 +127,7 @@
             </v-menu>
           </div>
 
-          <!-- Row 2: nick avatar + nick name | in/out | last online -->
+          <!-- Row 3: nick avatar + nick name | in/out | last online -->
           <div class="ch-row-2">
             <NickAvatarLock
               v-if="conversation.zaloAccount"
@@ -2434,13 +2434,27 @@ watch(() => props.editingMessage?.id, async (id) => {
   color: var(--smax-grey-700);
 }
 
-/* ════════ Chat header (2-row layout) ════════ */
+/* ════════ Chat header (3-row layout — Anh chốt 2026-06-03) ════════
+   Row 1: Tên KH + Gender (ưu tiên, tên đọc rõ)
+   Row 2: Chips meta (Cùng-chăm + Giai đoạn + Phân loại)
+   Row 3: Nick + counts + Online
+   Avatar align-self center, Actions align-self flex-start (sticky row 1) */
 .chat-header {
   background: var(--smax-bg);
   padding: 10px 17px;
   border-bottom: 1px solid var(--smax-grey-200);
-  display: flex; align-items: center; gap: 13px;
+  display: flex; align-items: flex-start; gap: 13px;
   flex-shrink: 0;
+}
+.chat-header > .ch-avatar-wrap { align-self: center; }
+.chat-header > .ch-actions { align-self: flex-start; margin-top: 2px; }
+
+/* Row chips (giữa row tên và row nick) */
+.ch-row-chips {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
 }
 
 /* Click avatar + tên header → mở dialog user info */
@@ -2452,7 +2466,7 @@ watch(() => props.editingMessage?.id, async (id) => {
 
 .ch-info {
   flex: 1; min-width: 0;
-  display: flex; flex-direction: column; gap: 5px;
+  display: flex; flex-direction: column; gap: 3px;
 }
 
 /* ── Responsive 1366×768 HD-first (Anh báo 2026-06-03) ──
@@ -2463,34 +2477,31 @@ watch(() => props.editingMessage?.id, async (id) => {
         ch-row-2 1 dòng
      3. Rút label phụ (cnt-scope, sub-meta btn) → giữ icon
      4. Buttons action compact: icon-only ở 1366, full text ở 1920+ */
-/* 2026-06-03: User giữ quyền toggle sidebar 240/56. Khi sale mở rộng sidebar
-   ở 1366 → cột 3 còn ~506px → header compact để không vỡ.
-   Đã bỏ button Webhook (~95px) nhẹ thêm. */
+/* 2026-06-03 — layout 3 dòng. Mỗi row tự thở rộng, không cần ẩn label.
+   Chỉ giảm padding + font-size 1 tier ở 1440 / 1300. */
 @media (max-width: 1440px) {
   .chat-header { padding: 8px 12px; gap: 10px; }
-  .ch-info { gap: 3px; }
-  .ch-row-1 { flex-wrap: wrap; gap: 6px; overflow: visible; }
-  .ch-name { font-size: 15px; max-width: 200px; }
+  .ch-name { font-size: 15px; }
+  .ch-row-chips { gap: 6px; padding: 2px 0; }
   .ch-cung-cham-chip { font-size: 10.5px; padding: 1px 6px; }
   .ch-gender-chip { font-size: 11px; padding: 2px 7px 2px 4px; }
   .ch-gender-chip .gender-svg { width: 14px; height: 14px; }
-  .ch-gender-chip .gender-label { display: none; }
   .ch-row-2 { font-size: 11px; gap: 5px; }
-  .nick-name { max-width: 120px; font-size: 11.5px; }
+  .nick-name { max-width: 140px; font-size: 11.5px; }
   .msg-counts .cnt-scope { display: none; }
   .msg-counts { gap: 5px; font-size: 11px; }
   .ch-actions { gap: 4px; }
   .btn-action { padding: 5px 8px; font-size: 11px; gap: 3px; }
   .btn-action .sub-meta { display: none; }
   .zlbl-trigger { padding: 3px 7px !important; font-size: 11px !important; }
-  .zlbl-current-name, .zlbl-empty { max-width: 90px; }
+  .zlbl-current-name, .zlbl-empty { max-width: 110px; }
 }
 @media (max-width: 1300px) {
   .chat-header { padding: 7px 10px; gap: 8px; }
-  .ch-name { font-size: 14px; max-width: 160px; }
-  .chat-header > :first-child { transform: scale(0.92); transform-origin: left center; }
+  .ch-name { font-size: 14px; }
+  .chat-header > .ch-avatar-wrap { transform: scale(0.92); transform-origin: left center; }
   .ch-row-2 :deep(.nick-avatar-lock) { display: none; }
-  .nick-name { max-width: 80px; }
+  .nick-name { max-width: 100px; }
   .btn-action { padding: 5px 7px; }
 }
 
