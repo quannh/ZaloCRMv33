@@ -1,0 +1,694 @@
+<!--
+  CustomerProfileDialog — Hồ sơ KH tổng hợp (component TÁI DÙNG).
+
+  Chốt qua /office-hours 2026-06-03 (anh duyệt):
+    - Modal popup giữa màn (~960px), mở từ MỌI màn (Contacts, Chat, Lead Pool…)
+      qua nút "👤 Xem hồ sơ". Nhận `contactId` (tự fetch) hoặc `contact` (dùng luôn).
+    - Là nơi lưu trữ + hiển thị toàn bộ thông tin KH tổng, tổng hợp từ Friend rows.
+    - Sale chính = Contact.assignedUser. Sale hỗ trợ = contactAccess role='collaborator'.
+      KHÔNG tạo field mới — dùng model có sẵn.
+    - Field "tổng hợp" (Trạng thái/Score/Zalo) tự cập nhật từ Friend rows (aggregate
+      backend có sẵn) → UI chỉ HIỂN THỊ. Field cá nhân (tên/SĐT/email/nghề/địa chỉ/
+      tag CRM) sửa trực tiếp tại đây → PUT /contacts/:id + PUT /contacts/:id/tags.
+    - Zalo status CHỈ 3 trạng thái: 🟢 Có Zalo / ⚪ Chưa tìm / 🔴 Không tìm thấy.
+    - Responsive: modal co theo viewport (HD 1366 / FHD 1920 / 2K 2560).
+
+  4 tab: Tổng quan · Nick chăm (N) · Lịch sử · Ghi chú.
+-->
+<template>
+  <teleport to="body">
+    <div v-if="modelValue" class="cpd-overlay" @click.self="close">
+      <div class="cpd-modal" role="dialog" aria-modal="true">
+        <div v-if="loading" class="cpd-loading">⏳ Đang tải hồ sơ khách hàng…</div>
+        <div v-else-if="error" class="cpd-error">⚠️ {{ error }}</div>
+
+        <template v-else-if="c">
+          <!-- ════════ Header ════════ -->
+          <header class="cpd-head">
+            <div class="cpd-av" :style="{ background: avatarBg }">
+              <img v-if="c.avatarUrl" :src="c.avatarUrl" :alt="displayName" />
+              <span v-else>{{ initials }}</span>
+            </div>
+            <div class="cpd-head-main">
+              <div class="cpd-name">
+                {{ displayName }}
+                <span v-if="c.gender === 'male'" class="gtag male">♂</span>
+                <span v-else-if="c.gender === 'female'" class="gtag female">♀</span>
+                <span v-if="ageOf" class="age">{{ ageOf }} tuổi</span>
+              </div>
+              <div class="cpd-sub">
+                <span v-if="primaryPhone">📱 {{ formatVnPhone(primaryPhone) }}</span>
+                <span v-if="c.email">✉ {{ c.email }}</span>
+                <span v-if="locationLine">📍 {{ locationLine }}</span>
+                <span v-if="c.createdAt">📅 KH từ {{ formatDate(c.createdAt) }}</span>
+              </div>
+              <div class="cpd-pills">
+                <span class="zpill" :class="zaloPillClass">{{ zaloPillText }}</span>
+                <span v-if="c.displayStatus" class="chip" :style="statusPillStyle">{{ c.displayStatus.name }}</span>
+                <span v-else-if="c.status" class="chip chip-grey">{{ c.status }}</span>
+                <span v-for="t in (c.tags || []).slice(0, 5)" :key="t" class="crmtag">🏷 {{ t }}</span>
+              </div>
+            </div>
+            <div class="cpd-scorebig">
+              <div class="n" :class="scoreClass">{{ Math.round(c.displayLeadScore ?? c.leadScore ?? 0) }}</div>
+              <div class="l">Score</div>
+            </div>
+            <button class="cpd-x" @click="close" title="Đóng">✕</button>
+          </header>
+
+          <!-- ════════ Tabs ════════ -->
+          <nav class="cpd-tabs">
+            <button
+              v-for="t in tabs" :key="t.key"
+              class="cpd-tab" :class="{ active: activeTab === t.key }"
+              @click="activeTab = t.key"
+            >
+              {{ t.label }}
+              <span v-if="t.count !== undefined" class="badge">{{ t.count }}</span>
+            </button>
+          </nav>
+
+          <!-- ════════ Body ════════ -->
+          <div class="cpd-body">
+            <!-- ─── TAB: Tổng quan ─── -->
+            <section v-if="activeTab === 'overview'" class="cpd-pane">
+              <div class="cpd-grid2">
+                <!-- Thông tin cá nhân (sửa được) -->
+                <div class="cpd-card">
+                  <h4>👤 Thông tin cá nhân</h4>
+                  <div class="kv">
+                    <span class="k">Tên khách</span>
+                    <span class="v"><input v-model="form.fullName" class="cpd-in" /></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Giới tính</span>
+                    <span class="v">
+                      <select v-model="form.gender" class="cpd-in">
+                        <option :value="null">— Không rõ —</option>
+                        <option value="male">Nam</option>
+                        <option value="female">Nữ</option>
+                        <option value="other">Khác</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Năm sinh</span>
+                    <span class="v"><input v-model="form.birthYear" class="cpd-in" placeholder="vd 1992" /></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Số điện thoại</span>
+                    <span class="v">
+                      <div class="phones-edit">
+                        <div class="phone-row">
+                          <input v-model="form.phone" class="cpd-in" placeholder="Số chính" />
+                        </div>
+                        <div v-for="(p, i) in form.extraPhones" :key="i" class="phone-row">
+                          <input v-model="p.label" class="cpd-in cpd-in-mini" placeholder="Nhãn" />
+                          <input v-model="p.phone" class="cpd-in" placeholder="Số phụ" />
+                          <span class="phone-rm" @click="form.extraPhones.splice(i, 1)" title="Xoá số">✕</span>
+                        </div>
+                        <span class="add-phone" @click="form.extraPhones.push({ phone: '', label: '' })">+ Thêm số</span>
+                      </div>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Email</span>
+                    <span class="v"><input v-model="form.email" class="cpd-in" /></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Nghề nghiệp</span>
+                    <span class="v"><input v-model="form.occupation" class="cpd-in" /></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Địa chỉ</span>
+                    <span class="v"><input v-model="form.addressLine" class="cpd-in" placeholder="Tỉnh / Quận / chi tiết" /></span>
+                  </div>
+                </div>
+
+                <!-- Chăm sóc & phân loại -->
+                <div class="cpd-card">
+                  <h4>🎯 Chăm sóc &amp; phân loại</h4>
+                  <div class="kv">
+                    <span class="k">Sale chính</span>
+                    <span class="v">
+                      <select v-model="form.assignedUserId" class="cpd-in">
+                        <option :value="null">— Chưa gán —</option>
+                        <option v-for="u in allUsers" :key="u.id" :value="u.id">{{ u.fullName }}</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Sale hỗ trợ <span class="agg">cùng chăm</span></span>
+                    <span class="v">
+                      <div class="assist-list">
+                        <span v-for="(a, ai) in assistSales" :key="a.user?.id || ai" class="sa-chip">
+                          {{ a.user?.fullName || a.user?.email || 'Sale' }}
+                        </span>
+                        <span v-if="!assistSales.length" class="empty">— chưa có —</span>
+                      </div>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Trạng thái KH <span class="agg">tổng hợp</span></span>
+                    <span class="v">
+                      <span v-if="c.displayStatus" class="chip" :style="statusPillStyle">{{ c.displayStatus.name }}</span>
+                      <span v-else class="empty">—</span>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Nguồn khách</span>
+                    <span class="v"><input v-model="form.source" class="cpd-in" /></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Tag CRM</span>
+                    <span class="v">
+                      <div class="tag-edit">
+                        <span v-for="(t, i) in form.tags" :key="i" class="crmtag editable">
+                          {{ t }}<span class="rm" @click="form.tags.splice(i, 1)">✕</span>
+                        </span>
+                        <input
+                          v-model="newTag" class="tag-add-in" placeholder="+ tag"
+                          @keydown.enter.prevent="addTag"
+                        />
+                      </div>
+                    </span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Score <span class="agg">tổng hợp</span></span>
+                    <span class="v"><b :class="scoreClass">{{ Math.round(c.displayLeadScore ?? c.leadScore ?? 0) }}</b></span>
+                  </div>
+                  <div class="kv">
+                    <span class="k">Zalo <span class="agg">tổng hợp</span></span>
+                    <span class="v"><span class="zpill" :class="zaloPillClass">{{ zaloPillText }}</span></span>
+                  </div>
+                </div>
+              </div>
+              <div class="cpd-aggnote">
+                💡 Field gắn nhãn <span class="agg">tổng hợp</span> tự cập nhật từ các nick chăm (tab "Nick chăm").
+                Thông tin cá nhân sửa trực tiếp tại đây, lưu vào hồ sơ tổng.
+              </div>
+            </section>
+
+            <!-- ─── TAB: Nick chăm ─── -->
+            <section v-else-if="activeTab === 'nicks'" class="cpd-pane">
+              <div v-if="loadingFriends" class="cpd-empty">Đang tải nick chăm…</div>
+              <template v-else>
+                <div class="deck-head">{{ friends.length }} NICK ĐANG CHĂM KHÁCH NÀY</div>
+                <div
+                  v-for="f in sortedFriends" :key="f.id"
+                  class="strip" :class="kbStripClass(f.relationshipKind)"
+                >
+                  <div class="s-r">
+                    <span class="s-av" :style="{ background: friendBg(f) }">{{ friendInitials(f) }}</span>
+                    <span class="nm">{{ friendName(f) }}</span>
+                    <span v-if="f.isWinner" class="winb">🏆 Nick chính</span>
+                    <span class="kb" :class="kbChipClass(f.relationshipKind)">{{ kbLabel(f.relationshipKind) }}</span>
+                    <span class="chatdot" :class="{ off: !f.hasConversation }">
+                      {{ f.hasConversation ? '💬 đang chat' : 'ø chưa chat' }}
+                    </span>
+                    <span class="s-right">
+                      <span class="s-score" :class="friendScoreClass(f.leadScore)">{{ f.leadScore || 0 }}</span>
+                    </span>
+                  </div>
+                  <div class="s-r s-r2">
+                    <span class="s-sale">Sale <b>{{ ownerName(f) }}</b></span>
+                    <span v-if="f.statusRef" class="chip" :style="{ background: (f.statusRef.color || '#5a6478') + '22', color: f.statusRef.color || '#5a6478' }">{{ f.statusRef.name }}</span>
+                    <span v-for="tag in friendTags(f)" :key="tag" class="ftag ft-manual">{{ tag }}</span>
+                    <span class="s-meta">
+                      <span>📥 <b>{{ f.totalInbound ?? 0 }}</b></span>
+                      <span>📤 <b>{{ f.totalOutbound ?? 0 }}</b></span>
+                    </span>
+                  </div>
+                  <div v-if="f.lastInboundPreview || f.lastOutboundPreview" class="s-r s-msg">
+                    <span v-if="f.lastInboundPreview">
+                      <span class="who kh">KH</span> "{{ f.lastInboundPreview }}"
+                    </span>
+                    <span v-else-if="f.lastOutboundPreview">
+                      <span class="who sale">Sale</span> "{{ f.lastOutboundPreview }}"
+                    </span>
+                  </div>
+                </div>
+                <div v-if="friends.length === 0" class="cpd-empty">
+                  Khách này chưa có nick nào chăm (chưa có Zalo).
+                </div>
+              </template>
+            </section>
+
+            <!-- ─── TAB: Lịch sử ─── -->
+            <section v-else-if="activeTab === 'timeline'" class="cpd-pane">
+              <div v-if="loadingTimeline" class="cpd-empty">Đang tải lịch sử…</div>
+              <template v-else>
+                <div v-for="t in timeline" :key="t.id" class="tl-item">
+                  <span class="dot"></span>
+                  <div class="tx">{{ t.icon }} {{ t.text }}<div class="tt">{{ formatRelative(t.at) }}</div></div>
+                </div>
+                <div v-if="timeline.length === 0" class="cpd-empty">Chưa có hoạt động.</div>
+              </template>
+            </section>
+
+            <!-- ─── TAB: Ghi chú ─── -->
+            <section v-else-if="activeTab === 'notes'" class="cpd-pane">
+              <div v-if="loadingNotes" class="cpd-empty">Đang tải ghi chú…</div>
+              <template v-else>
+                <div v-for="n in notes" :key="n.id" class="tl-item">
+                  <span class="dot note"></span>
+                  <div class="tx">{{ n.body }}<div class="tt">{{ n.author?.fullName || 'N/A' }} · {{ formatRelative(n.createdAt) }}</div></div>
+                </div>
+                <div v-if="notes.length === 0" class="cpd-empty">Chưa có ghi chú nào.</div>
+              </template>
+            </section>
+          </div>
+
+          <!-- ════════ Footer ════════ -->
+          <footer class="cpd-foot">
+            <button v-if="c.hasZalo" class="btn primary" @click="goChat">💬 Mở chat Zalo</button>
+            <button v-else class="btn virtual" @click="goChat">🔒 Mở chat nội bộ</button>
+            <button class="btn" @click="$emit('automation', c)">⚡ Marketing</button>
+            <span class="spacer"></span>
+            <button class="btn" :disabled="saving" @click="save">{{ saving ? '⏳ Đang lưu…' : '💾 Lưu thay đổi' }}</button>
+            <button class="btn" @click="close">✕ Đóng</button>
+          </footer>
+        </template>
+      </div>
+    </div>
+  </teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { api } from '@/api/index';
+import { useToast } from '@/composables/use-toast';
+import { formatRecentDateTime } from '@/composables/use-contacts';
+import type { Contact } from '@/composables/use-contacts';
+
+const props = defineProps<{
+  modelValue: boolean;
+  /** Mở bằng id (tự fetch) HOẶC contact object có sẵn (dùng luôn, vẫn refetch chi tiết). */
+  contactId?: string | null;
+  contact?: Contact | null;
+}>();
+const emit = defineEmits<{
+  'update:modelValue': [v: boolean];
+  saved: [];
+  automation: [c: Contact];
+}>();
+
+const router = useRouter();
+const toast = useToast();
+
+type TabKey = 'overview' | 'nicks' | 'timeline' | 'notes';
+const activeTab = ref<TabKey>('overview');
+
+const c = ref<Contact | null>(null);
+const loading = ref(false);
+const error = ref<string | null>(null);
+const saving = ref(false);
+
+const friends = ref<any[]>([]);
+const loadingFriends = ref(false);
+const timeline = ref<any[]>([]);
+const loadingTimeline = ref(false);
+const notes = ref<any[]>([]);
+const loadingNotes = ref(false);
+const allUsers = ref<Array<{ id: string; fullName: string }>>([]);
+
+// ── Form state (field cấp Contact sửa được) ──
+const form = ref({
+  fullName: '' as string | null,
+  gender: null as string | null,
+  birthYear: '' as string | number | null,
+  phone: '' as string | null,
+  extraPhones: [] as Array<{ phone: string; label: string }>,
+  email: '' as string | null,
+  occupation: '' as string | null,
+  addressLine: '' as string | null,
+  source: '' as string | null,
+  assignedUserId: null as string | null,
+  tags: [] as string[],
+});
+const newTag = ref('');
+
+function hydrateForm(ct: Contact) {
+  form.value = {
+    fullName: ct.fullName || ct.crmName || '',
+    gender: ct.gender ?? null,
+    birthYear: ct.birthYear ?? (ct.birthDate ? new Date(ct.birthDate).getFullYear() : ''),
+    phone: ct.phone || '',
+    extraPhones: (ct.phonesExtra || []).map((p) => ({ phone: p.phone, label: p.label || '' })),
+    email: ct.email || '',
+    occupation: ct.occupation || '',
+    addressLine: ct.addressLine || '',
+    source: ct.source || '',
+    assignedUserId: ct.assignedUserId ?? ct.assignedUser?.id ?? null,
+    tags: [...(ct.tags || [])],
+  };
+}
+
+// ── Fetch chi tiết khi mở ──
+async function loadDetail() {
+  const id = props.contactId || props.contact?.id;
+  if (!id) return;
+  loading.value = true;
+  error.value = null;
+  activeTab.value = 'overview';
+  friends.value = [];
+  timeline.value = [];
+  notes.value = [];
+  try {
+    const res = await api.get<Contact & { friends?: any[] }>(`/contacts/${id}`);
+    c.value = res.data;
+    friends.value = sortFriends(res.data.friends || []);
+    hydrateForm(res.data);
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || 'Không tải được hồ sơ';
+  } finally {
+    loading.value = false;
+  }
+  loadUsers();
+}
+
+function sortFriends(arr: any[]): any[] {
+  const sorted = [...arr].sort((a, b) => {
+    if (a.hasConversation !== b.hasConversation) return a.hasConversation ? -1 : 1;
+    return (b.leadScore || 0) - (a.leadScore || 0);
+  });
+  if (sorted.length) sorted[0].isWinner = true;
+  return sorted;
+}
+const sortedFriends = computed(() => friends.value);
+
+async function loadUsers() {
+  if (allUsers.value.length) return;
+  try {
+    const res = await api.get<{ users?: Array<{ id: string; fullName: string }> }>('/users');
+    allUsers.value = res.data?.users || [];
+  } catch { /* non-critical */ }
+}
+
+async function loadTimeline() {
+  const id = c.value?.id;
+  if (!id || timeline.value.length) return;
+  loadingTimeline.value = true;
+  try {
+    const res = await api.get<any>(`/customers/${id}/timeline?limit=25`);
+    timeline.value = (res.data?.items ?? []).map((x: any) => ({
+      id: x.id,
+      icon: x.type === 'message' ? '💬' : x.type === 'call' ? '📞' : x.type === 'appointment' ? '📅' : '•',
+      text: x.data?.preview || x.data?.body || x.data?.summary || x.title || '(không nội dung)',
+      at: x.createdAt,
+    }));
+  } catch { timeline.value = []; }
+  finally { loadingTimeline.value = false; }
+}
+async function loadNotes() {
+  const id = c.value?.id;
+  if (!id || notes.value.length) return;
+  loadingNotes.value = true;
+  try {
+    const res = await api.get<any>(`/contacts/${id}/notes`);
+    notes.value = res.data?.notes ?? [];
+  } catch { notes.value = []; }
+  finally { loadingNotes.value = false; }
+}
+
+watch(() => props.modelValue, (open) => {
+  if (open) loadDetail();
+});
+watch(activeTab, (t) => {
+  if (t === 'timeline') loadTimeline();
+  if (t === 'notes') loadNotes();
+});
+
+// ── Save ──
+function addTag() {
+  const t = newTag.value.trim();
+  if (t && !form.value.tags.includes(t)) form.value.tags.push(t);
+  newTag.value = '';
+}
+async function save() {
+  const id = c.value?.id;
+  if (!id || saving.value) return;
+  saving.value = true;
+  try {
+    const by = typeof form.value.birthYear === 'string' ? parseInt(form.value.birthYear) : form.value.birthYear;
+    await api.put(`/contacts/${id}`, {
+      fullName: form.value.fullName,
+      gender: form.value.gender,
+      birthYear: Number.isFinite(by) ? by : null,
+      phone: form.value.phone,
+      phonesExtra: form.value.extraPhones.filter((p) => p.phone?.trim()),
+      email: form.value.email,
+      occupation: form.value.occupation,
+      addressLine: form.value.addressLine,
+      source: form.value.source,
+      assignedUserId: form.value.assignedUserId,
+    });
+    // Tag riêng endpoint
+    await api.put(`/contacts/${id}/tags`, { tags: form.value.tags });
+    toast.success('Đã lưu hồ sơ khách hàng');
+    emit('saved');
+    close();
+  } catch (err: any) {
+    toast.error(err?.response?.data?.message || err?.response?.data?.error || 'Lưu thất bại');
+  } finally {
+    saving.value = false;
+  }
+}
+
+function close() { emit('update:modelValue', false); }
+
+function goChat() {
+  if (!c.value) return;
+  close();
+  router.push({ path: '/chat', query: { contactId: c.value.id } });
+}
+
+// ── Computed display ──
+const displayName = computed(() => c.value?.fullName || c.value?.crmName || '(chưa đặt tên)');
+const primaryPhone = computed(() => c.value?.phone || null);
+const locationLine = computed(() => [c.value?.province, c.value?.district].filter(Boolean).join(' / '));
+const ageOf = computed(() => {
+  if (!c.value) return null;
+  const cy = new Date().getFullYear();
+  if (c.value.birthDate) { const y = new Date(c.value.birthDate).getFullYear(); if (Number.isFinite(y)) return cy - y; }
+  if (c.value.birthYear) return cy - c.value.birthYear;
+  return null;
+});
+const initials = computed(() => {
+  const s = displayName.value.trim();
+  if (!s) return '?';
+  const parts = s.split(/\s+/);
+  return parts.length === 1 ? s.charAt(0).toUpperCase() : (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+});
+const avatarBg = computed(() => {
+  const palette = ['#0ea5e9', '#f97316', '#10b981', '#a855f7', '#ec4899', '#eab308', '#06b6d4'];
+  const h = displayName.value.split('').reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  return palette[h % palette.length];
+});
+
+// Zalo CHỈ 3 trạng thái (anh chốt 2026-06-03)
+const zaloDisplay = computed<'yes' | 'no' | 'unknown'>(() => {
+  const ct: any = c.value;
+  if (!ct) return 'unknown';
+  if ((ct.childrenCount ?? 0) > 0 || ct.zaloUid || ct.zaloGlobalId || ct.zaloUsername) return 'yes';
+  if (ct.displayHasZalo === true || ct.hasZalo === true) return 'yes';
+  if (ct.hasZalo === false) return 'no';
+  return 'unknown';
+});
+const zaloPillClass = computed(() => zaloDisplay.value === 'yes' ? 'z-yes' : zaloDisplay.value === 'no' ? 'z-no' : 'z-unk');
+const zaloPillText = computed(() => zaloDisplay.value === 'yes' ? '🟢 Có Zalo' : zaloDisplay.value === 'no' ? '🔴 Không tìm thấy' : '⚪ Chưa tìm');
+
+const statusPillStyle = computed(() => {
+  const s: any = c.value?.displayStatus;
+  if (!s?.color) return { background: 'rgba(90,100,120,0.12)', color: '#5a6478' };
+  return { background: s.color + '22', color: s.color };
+});
+const scoreClass = computed(() => {
+  const s = Math.round((c.value as any)?.displayLeadScore ?? c.value?.leadScore ?? 0);
+  return s >= 70 ? 'sc-hi' : s >= 40 ? 'sc-mid' : 'sc-lo';
+});
+
+const assistSales = computed(() =>
+  (c.value?.contactAccess || []).filter((a) => a.role === 'collaborator'),
+);
+
+const tabs = computed(() => [
+  { key: 'overview' as TabKey, label: 'Tổng quan', count: undefined },
+  { key: 'nicks' as TabKey, label: 'Nick chăm', count: friends.value.length || (c.value as any)?.childrenCount || 0 },
+  { key: 'timeline' as TabKey, label: 'Lịch sử', count: undefined },
+  { key: 'notes' as TabKey, label: 'Ghi chú', count: notes.value.length || undefined },
+]);
+
+// ── Friend helpers ──
+function friendName(f: any) { return f.zaloAccount?.displayName || f.zaloDisplayName || f.aliasInNick || 'Nick'; }
+function ownerName(f: any) { return f.zaloAccount?.owner?.fullName || '—'; }
+function friendInitials(f: any) {
+  const s = friendName(f); const parts = s.split(/\s+/);
+  return parts.length === 1 ? s.charAt(0).toUpperCase() : (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+function friendBg(f: any) {
+  const palette = ['#1e88e5', '#43a047', '#ff9800', '#7e57c2', '#ec407a'];
+  const h = friendName(f).split('').reduce((a: number, ch: string) => a + ch.charCodeAt(0), 0);
+  return palette[h % palette.length];
+}
+function friendScoreClass(s: number) { return (s || 0) >= 70 ? 'sc-hi' : (s || 0) >= 40 ? 'sc-mid' : 'sc-lo'; }
+function friendTags(f: any): string[] {
+  const labels = Array.isArray(f.zaloLabels) ? f.zaloLabels.map((l: any) => l.name || '').filter(Boolean) : [];
+  return labels.slice(0, 3);
+}
+function kbLabel(k: string) {
+  return { friend: '🟢 Đã kết bạn', pending_friend: '🟡 Đã gửi mời', chatting_stranger: '🔵 Chat lạ', ghost: '⚪ Đã ngắt' }[k] || k;
+}
+function kbChipClass(k: string) {
+  return { friend: 'kbY', pending_friend: 'kbP', chatting_stranger: 'kbI', ghost: 'kbO' }[k] || 'kbO';
+}
+function kbStripClass(k: string) {
+  return { friend: 'kb-yes', pending_friend: 'kb-pending', chatting_stranger: 'kb-info', ghost: 'kb-off' }[k] || '';
+}
+
+// ── Format ──
+function formatRelative(iso: string | null | undefined) { return formatRecentDateTime(iso); }
+function formatDate(iso: string | null | undefined) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+}
+function formatVnPhone(phone: string | null | undefined): string {
+  if (!phone) return '';
+  let s = String(phone).replace(/\D/g, '');
+  if (s.startsWith('84') && s.length === 11) s = '0' + s.slice(2);
+  if (s.length === 10) return s.slice(0, 4) + ' ' + s.slice(4, 7) + ' ' + s.slice(7);
+  return phone;
+}
+</script>
+
+<style scoped>
+.cpd-overlay {
+  position: fixed; inset: 0; background: rgba(20, 24, 35, 0.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 32px 16px; z-index: 1200;
+}
+.cpd-modal {
+  position: relative; width: 960px; max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px); background: #fff; border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  display: flex; flex-direction: column; overflow: hidden;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+/* Responsive: FHD/2K cho rộng hơn, HD co lại */
+@media (min-width: 1920px) { .cpd-modal { width: 1080px; } }
+@media (min-width: 2560px) { .cpd-modal { width: 1200px; } }
+
+.cpd-loading, .cpd-error { padding: 60px; text-align: center; color: var(--smax-grey-700); }
+.cpd-error { color: var(--smax-error); }
+
+/* Header */
+.cpd-head { padding: 16px 20px; border-bottom: 1px solid var(--smax-grey-200); display: flex; gap: 14px; align-items: flex-start; position: relative; }
+.cpd-av { width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 22px; flex-shrink: 0; overflow: hidden; }
+.cpd-av img { width: 100%; height: 100%; object-fit: cover; }
+.cpd-head-main { flex: 1; min-width: 0; }
+.cpd-name { font-size: 19px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gtag { font-size: 12px; border-radius: 8px; padding: 1px 7px; font-weight: 600; }
+.gtag.male { background: rgba(30, 136, 229, 0.13); color: #1565c0; }
+.gtag.female { background: rgba(233, 30, 99, 0.12); color: #c2185b; }
+.age { font-size: 13px; color: var(--smax-grey-700); font-weight: 500; }
+.cpd-sub { font-size: 12.5px; color: var(--smax-grey-700); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+.cpd-pills { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; align-items: center; }
+.cpd-scorebig { flex-shrink: 0; text-align: center; padding: 0 6px; }
+.cpd-scorebig .n { font-size: 26px; font-weight: 800; line-height: 1; }
+.cpd-scorebig .n.sc-hi { color: #1b8a3f; } .cpd-scorebig .n.sc-mid { color: #ef6c00; } .cpd-scorebig .n.sc-lo { color: #c62828; }
+.cpd-scorebig .l { font-size: 10px; color: var(--smax-grey-400); text-transform: uppercase; }
+.cpd-x { position: absolute; top: 14px; right: 16px; border: none; background: none; font-size: 20px; color: var(--smax-grey-400); cursor: pointer; }
+.cpd-x:hover { color: var(--smax-text); }
+
+.zpill { display: inline-flex; align-items: center; gap: 3px; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.z-yes { background: rgba(0, 200, 83, 0.14); color: #1b8a3f; }
+.z-no { background: rgba(255, 61, 0, 0.12); color: #c62828; }
+.z-unk { background: var(--smax-grey-100); color: #9e9e9e; }
+.chip { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.chip-grey { background: rgba(90, 100, 120, 0.1); color: var(--smax-grey-700); }
+.crmtag { font-size: 11px; border: 1px solid var(--smax-grey-300); border-radius: 9px; padding: 1px 8px; color: var(--smax-grey-700); background: #fff; }
+
+/* Tabs */
+.cpd-tabs { display: flex; padding: 0 20px; border-bottom: 1px solid var(--smax-grey-200); background: var(--smax-grey-50); gap: 2px; }
+.cpd-tab { padding: 11px 16px; font-size: 13px; cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; color: var(--smax-grey-700); font-weight: 500; font-family: inherit; }
+.cpd-tab.active { color: var(--smax-primary); border-bottom-color: var(--smax-primary); font-weight: 700; background: #fff; }
+.cpd-tab .badge { font-size: 10px; background: var(--smax-grey-200); border-radius: 7px; padding: 0 6px; margin-left: 4px; }
+
+.cpd-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+.cpd-pane { animation: fade 0.12s ease; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.cpd-empty { color: var(--smax-grey-400); font-size: 12.5px; padding: 16px 0; text-align: center; }
+.empty { color: var(--smax-grey-400); }
+
+/* Overview grid */
+.cpd-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 880px) { .cpd-grid2 { grid-template-columns: 1fr; } }
+.cpd-card { border: 1px solid var(--smax-grey-200); border-radius: 9px; overflow: hidden; }
+.cpd-card h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--smax-grey-700); font-weight: 700; padding: 9px 13px; background: var(--smax-grey-50); border-bottom: 1px solid var(--smax-grey-200); }
+.kv { display: flex; justify-content: space-between; align-items: center; padding: 7px 13px; border-bottom: 1px solid var(--smax-grey-100); font-size: 12.5px; gap: 10px; }
+.kv:last-child { border-bottom: none; }
+.kv .k { color: var(--smax-grey-700); flex-shrink: 0; }
+.kv .v { font-weight: 600; text-align: right; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: 1; min-width: 0; }
+.agg { font-size: 9px; background: rgba(41, 98, 255, 0.1); color: #1565c0; border-radius: 5px; padding: 1px 5px; font-weight: 600; }
+.cpd-in { border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; font-size: 12.5px; font-family: inherit; text-align: right; background: transparent; font-weight: 600; width: 100%; max-width: 230px; color: var(--smax-text); }
+.cpd-in:hover { border-color: var(--smax-grey-300); background: #fff; }
+.cpd-in:focus { outline: none; border-color: var(--smax-primary); background: #fff; text-align: left; }
+.cpd-in-mini { max-width: 64px; }
+.phones-edit { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; width: 100%; }
+.phone-row { display: flex; gap: 5px; align-items: center; justify-content: flex-end; width: 100%; }
+.phone-rm { cursor: pointer; color: var(--smax-grey-400); font-size: 11px; }
+.add-phone { font-size: 11px; color: var(--smax-primary); cursor: pointer; font-weight: 600; }
+.assist-list { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.sa-chip { font-size: 11px; background: var(--smax-grey-100); border-radius: 9px; padding: 2px 8px; color: var(--smax-grey-700); }
+.tag-edit { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.crmtag.editable .rm { cursor: pointer; color: var(--smax-grey-400); margin-left: 4px; }
+.tag-add-in { border: 1px dashed var(--smax-grey-300); border-radius: 9px; padding: 1px 8px; font-size: 11px; width: 70px; font-family: inherit; }
+.tag-add-in:focus { outline: none; border-color: var(--smax-primary); }
+.cpd-aggnote { margin-top: 14px; font-size: 11.5px; color: var(--smax-grey-700); background: #f7f9fc; border: 1px solid var(--smax-grey-200); border-radius: 7px; padding: 9px 13px; }
+
+/* Nick strip (lai ①+② đã chốt) */
+.deck-head { font-size: 11px; text-transform: uppercase; color: var(--smax-grey-700); font-weight: 700; margin-bottom: 9px; }
+.strip { background: #fff; border: 1px solid var(--smax-grey-200); border-left: 5px solid var(--smax-grey-300); border-radius: 6px; padding: 9px 12px; margin-bottom: 7px; }
+.strip.kb-yes { border-left-color: var(--smax-success); }
+.strip.kb-pending { border-left-color: var(--smax-warning); }
+.strip.kb-info { border-left-color: var(--smax-info); }
+.strip.kb-off { border-left-color: #9e9e9e; opacity: 0.72; }
+.s-r { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 5px; }
+.s-r:last-child { margin-bottom: 0; }
+.s-av { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 600; }
+.s-r .nm { font-weight: 700; }
+.winb { font-size: 10px; background: rgba(0, 200, 83, 0.13); color: #1b8a3f; border-radius: 6px; padding: 1px 6px; }
+.kb { font-size: 11px; font-weight: 600; border-radius: 9px; padding: 1px 8px; }
+.kbY { background: rgba(0, 200, 83, 0.15); color: #1b8a3f; } .kbP { background: rgba(255, 145, 0, 0.16); color: #ef6c00; }
+.kbI { background: rgba(33, 150, 243, 0.14); color: #1565c0; } .kbO { background: var(--smax-grey-100); color: #9e9e9e; }
+.chatdot { font-size: 11px; color: #1b8a3f; } .chatdot.off { color: #9e9e9e; }
+.s-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.s-score { min-width: 30px; text-align: center; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-size: 12px; }
+.sc-hi { background: rgba(0, 200, 83, 0.15); color: #1b8a3f; } .sc-mid { background: rgba(255, 145, 0, 0.15); color: #ef6c00; } .sc-lo { background: rgba(255, 61, 0, 0.13); color: #c62828; }
+.s-r2 { font-size: 11.5px; }
+.s-sale { color: var(--smax-grey-700); } .s-sale b { color: var(--smax-text); }
+.ftag { font-size: 10.5px; border: 1px solid #42a5f5; color: #1565c0; border-radius: 9px; padding: 1px 7px; font-weight: 600; }
+.s-meta { display: flex; gap: 10px; margin-left: auto; color: var(--smax-grey-700); } .s-meta b { color: var(--smax-text); }
+.s-msg { font-size: 11px; }
+.who { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 5px; }
+.who.kh { background: rgba(0, 200, 83, 0.12); color: #1b8a3f; } .who.sale { background: rgba(33, 150, 243, 0.1); color: #1565c0; }
+
+/* Timeline / Notes */
+.tl-item { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px dashed var(--smax-grey-100); }
+.tl-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--smax-primary); margin-top: 5px; flex-shrink: 0; }
+.tl-item .dot.note { background: var(--smax-warning); }
+.tl-item .tx { flex: 1; font-size: 12.5px; }
+.tl-item .tx .tt { font-size: 11px; color: var(--smax-grey-400); margin-top: 2px; }
+
+/* Footer */
+.cpd-foot { padding: 12px 20px; border-top: 1px solid var(--smax-grey-200); display: flex; gap: 8px; background: var(--smax-grey-50); }
+.cpd-foot .spacer { flex: 1; }
+.btn { border: 1px solid var(--smax-grey-300); background: #fff; border-radius: 7px; padding: 8px 16px; font-size: 13px; cursor: pointer; color: var(--smax-grey-700); font-weight: 500; font-family: inherit; }
+.btn:hover { border-color: var(--smax-primary); color: var(--smax-primary); }
+.btn.primary { background: var(--smax-primary); color: #fff; border-color: var(--smax-primary); }
+.btn.primary:hover { background: var(--smax-primary-hover); color: #fff; }
+.btn.virtual { background: #fff3e0; color: #ef6c00; border-color: #ffcc80; }
+.btn:disabled { opacity: 0.6; cursor: default; }
+</style>

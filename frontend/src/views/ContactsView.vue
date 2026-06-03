@@ -184,14 +184,13 @@
             <th class="w-32"></th>
             <th class="w-40"></th>
             <th class="w-200">Tên CRM / Zalo (KH)</th>
-            <th class="w-110">SĐT</th>
-            <th class="w-70">Giới tính</th>
+            <th class="w-120">SĐT</th>
             <th class="w-100">Tỉnh/Quận</th>
             <th class="w-80">Nguồn</th>
             <th class="w-100">Trạng thái KH</th>
             <th class="w-60">Score</th>
             <th class="w-180">Nick chăm</th>
-            <th class="w-130">Sale chính</th>
+            <th class="w-150">Sale chính / hỗ trợ</th>
             <th class="w-170">KH nhắn cuối</th>
             <th class="w-170">Sale nhắn cuối</th>
             <th class="w-80">Tin in/out</th>
@@ -212,6 +211,7 @@
                 open: expandedId === contact.id,
                 'detail-active': viewMode === 'm2' && selectedContact?.id === contact.id,
                 'row-flash': focusedContactId === contact.id,
+                'row-no-zalo': zaloDisplay(contact) !== 'yes',
               }"
               :data-contact-id="contact.id"
               @click="onRowClick($event, contact.id)"
@@ -231,8 +231,18 @@
                 />
               </td>
               <td>
+                <!-- 2026-06-03: GT + tuổi gắn liền tên (anh chốt qua office-hours) -->
                 <div class="name-text">
                   {{ contact.crmName || contact.fullName || '—' }}
+                  <span
+                    v-if="contact.gender === 'male'" class="gtag-inline gtag-male"
+                    :title="genderLabel(contact.gender)"
+                  >♂</span>
+                  <span
+                    v-else-if="contact.gender === 'female'" class="gtag-inline gtag-female"
+                    :title="genderLabel(contact.gender)"
+                  >♀</span>
+                  <span v-if="ageOf(contact)" class="age-inline">{{ ageOf(contact) }}t</span>
                 </div>
                 <!-- Anh chốt 2026-05-28: badge "Cùng chăm (N)" xuống dòng 2 để giảm width cột -->
                 <div
@@ -250,18 +260,15 @@
                   {{ contact.fullName }}
                 </div>
               </td>
-              <td><span class="phone-cell">{{ formatVnPhone(contact.phone) }}</span></td>
               <td>
-                <!-- Anh chốt 2026-05-28: icon giới tính nhỏ + tuổi xuống hàng 2 giảm width -->
-                <template v-if="contact.gender || ageOf(contact)">
-                  <div class="gender-row">
-                    <span v-if="contact.gender" :title="genderLabel(contact.gender)">
-                      {{ contact.gender === 'male' ? '♂' : contact.gender === 'female' ? '♀' : '⚥' }}
-                    </span>
-                  </div>
-                  <div v-if="ageOf(contact)" class="gender-age">{{ ageOf(contact) }}t</div>
-                </template>
-                <span v-else class="empty">—</span>
+                <!-- 2026-06-03: SĐT multi-line — số chính đậm + số phụ nhãn -->
+                <div class="phones-cell">
+                  <span class="phone-cell phone-main">{{ formatVnPhone(contact.phone) }}</span>
+                  <span
+                    v-for="(p, pi) in (contact.phonesExtra || [])" :key="pi"
+                    class="phone-extra"
+                  >{{ formatVnPhone(p.phone) }}<span v-if="p.label" class="phone-lbl">{{ p.label }}</span></span>
+                </div>
               </td>
               <td>
                 <template v-if="contact.province || contact.district">
@@ -317,7 +324,7 @@
               </td>
               <td>
                 <div class="assigned-cell">
-                  <span>{{ contact.assignedUser?.fullName || '—' }}</span>
+                  <span class="sale-main-name">{{ contact.assignedUser?.fullName || '—' }}</span>
                   <!-- Phase Contact Scope Hybrid 2026-05-27 — badge collaborator -->
                   <span
                     v-if="contact.viewerRole === 'primary'"
@@ -329,6 +336,17 @@
                     class="role-badge role-collab"
                     title="Bạn cùng chăm KH này qua nick của bạn (đồng đội với sale khác)"
                   >🤝 Cùng chăm</span>
+                  <!-- 2026-06-03: Sale hỗ trợ — avatar stack từ contactAccess role=collaborator -->
+                  <div v-if="assistSalesOf(contact).length" class="assist-row" :title="assistTooltip(contact)">
+                    <span class="assist-avatars">
+                      <span
+                        v-for="(a, ai) in assistSalesOf(contact).slice(0, 3)" :key="a.user?.id || ai"
+                        class="assist-av"
+                        :style="{ background: avatarColor(a.user?.fullName || a.user?.email || '') }"
+                      >{{ initialOf(a.user?.fullName || a.user?.email || '?') }}</span>
+                    </span>
+                    <span class="assist-lbl">+{{ assistSalesOf(contact).length }} hỗ trợ</span>
+                  </div>
                 </div>
               </td>
               <td>
@@ -393,9 +411,9 @@
               </td>
               <td>
                 <div class="action-cell">
+                  <button class="row-action-btn view-profile-btn" @click.stop="openProfile(contact)" title="Xem hồ sơ khách hàng tổng hợp">👤 Hồ sơ</button>
                   <button class="row-action-btn" @click="goChat(contact)" title="Mở chat">💬</button>
-                  <button class="row-action-btn" @click="openDetail(contact)" title="Chi tiết">✎</button>
-                  <button class="row-action-btn" @click="onAutomation(contact)" title="Automation">⚡</button>
+                  <button class="row-action-btn" @click.stop="openDetail(contact)" title="Sửa nhanh">✎</button>
                 </div>
               </td>
             </tr>
@@ -572,6 +590,14 @@
     <ContactDetailDialog v-model="showDialog" :contact="selectedContact" @saved="onSaved" @deleted="onDeleted" />
     <ParentCandidateDialog v-model="showCandidateDialog" @resolved="onCandidateResolved" />
 
+    <!-- Hồ sơ KH tổng (modal tái dùng — mở từ nút "👤 Hồ sơ") -->
+    <CustomerProfileDialog
+      v-model="showProfileDialog"
+      :contact-id="profileContactId"
+      @saved="onProfileSaved"
+      @automation="onAutomation"
+    />
+
     <!-- Friend status picker dialog (per-pair status) -->
     <div v-if="statusEditTarget" class="status-picker-overlay" @click.self="statusEditTarget = null">
       <div class="status-picker">
@@ -618,6 +644,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
 import ContactDetailPanel from '@/components/contacts/ContactDetailPanel.vue';
+import CustomerProfileDialog from '@/components/contacts/CustomerProfileDialog.vue';
 import ParentCandidateDialog from '@/components/contacts/ParentCandidateDialog.vue';
 import DuplicateReviewDialog from '@/components/contacts/DuplicateReviewDialog.vue';
 import AddCustomerQuickDialog from '@/components/contacts/AddCustomerQuickDialog.vue';
@@ -671,7 +698,8 @@ function toggleColumn(key: OptColKey) {
   try { localStorage.setItem(LS_KEY_COLS, JSON.stringify(visibleCols.value)); } catch { /* ignore */ }
 }
 const totalColumnsCount = computed(() =>
-  17 + Object.values(visibleCols.value).filter(Boolean).length,
+  // 2026-06-03: bỏ cột Giới tính riêng (gộp vào Tên) → 16 cột cố định
+  16 + Object.values(visibleCols.value).filter(Boolean).length,
 );
 
 // Child (KH Con) optional cols — riêng vì bản chất per-Friend chứ không aggregate.
@@ -699,6 +727,15 @@ const showDialog = ref(false);
 const showDuplicateDialog = ref(false);
 const showCandidateDialog = ref(false);
 const showAddCustomerDialog = ref(false);
+
+// Hồ sơ KH tổng (CustomerProfileDialog 2026-06-03) — modal tái dùng, mở từ nút "Xem hồ sơ".
+const showProfileDialog = ref(false);
+const profileContactId = ref<string | null>(null);
+function openProfile(c: Contact) {
+  profileContactId.value = c.id;
+  showProfileDialog.value = true;
+}
+function onProfileSaved() { fetchContacts(); }
 
 function onContactQuickCreated(_c: { id: string; fullName: string | null; phone: string | null }) {
   // Reload list ngay để KH mới xuất hiện đầu danh sách
@@ -1304,6 +1341,18 @@ function nickCountChips(contact: Contact): NickCountChip[] {
 function hasAnyFriend(contact: Contact): boolean {
   return (contact.childrenCount ?? 0) > 0;
 }
+// 2026-06-03: Sale hỗ trợ = contactAccess role='collaborator' (loại trừ sale chính nếu trùng).
+function assistSalesOf(contact: Contact) {
+  const mainId = contact.assignedUserId ?? contact.assignedUser?.id ?? null;
+  return (contact.contactAccess || []).filter(
+    (a) => a.role === 'collaborator' && a.user?.id && a.user.id !== mainId,
+  );
+}
+function assistTooltip(contact: Contact): string {
+  const list = assistSalesOf(contact);
+  if (!list.length) return '';
+  return 'Sale hỗ trợ cùng chăm:\n' + list.map((a) => '· ' + (a.user?.fullName || a.user?.email || 'Sale')).join('\n');
+}
 function initialOf(name: string): string {
   const t = name.trim();
   if (!t) return '?';
@@ -1758,6 +1807,15 @@ watch(
   font-size: 12px;
 }
 .row-action-btn:hover { background: var(--smax-primary-soft); border-color: var(--smax-primary); color: var(--smax-primary); }
+/* Nút "Xem hồ sơ" — action chính, nổi bật hơn icon button */
+.view-profile-btn {
+  background: var(--smax-primary-soft);
+  border-color: var(--smax-primary);
+  color: var(--smax-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.view-profile-btn:hover { background: var(--smax-primary); color: #fff; }
 
 .child-wrap td {
   background: var(--smax-grey-50);
@@ -2223,4 +2281,47 @@ watch(
   .add-customer-fab { right: 56px; bottom: 56px; height: 56px; padding: 0 26px 0 20px; }
   .add-customer-fab .fab-label { font-size: 15px; }
 }
+
+/* ════════ 2026-06-03: Hồ sơ KH tổng — GT+tuổi gắn tên, SĐT multi-line, sale hỗ trợ, no-Zalo ════════ */
+/* Giới tính + tuổi inline cạnh tên */
+.gtag-inline {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 7px;
+  padding: 0 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.gtag-inline.gtag-male { background: rgba(30, 136, 229, 0.13); color: #1565c0; }
+.gtag-inline.gtag-female { background: rgba(233, 30, 99, 0.12); color: #c2185b; }
+.age-inline { font-size: 11px; color: var(--smax-grey-700); margin-left: 4px; font-weight: 500; }
+
+/* SĐT multi-line */
+.phones-cell { display: flex; flex-direction: column; gap: 1px; }
+.phone-cell.phone-main { font-weight: 600; color: var(--smax-text); }
+.phone-extra { font-size: 11px; color: var(--smax-grey-700); font-variant-numeric: tabular-nums; }
+.phone-extra .phone-lbl {
+  font-size: 9px; color: var(--smax-grey-400);
+  background: var(--smax-grey-100); border-radius: 4px;
+  padding: 0 4px; margin-left: 4px;
+}
+
+/* Sale hỗ trợ — avatar stack */
+.sale-main-name { font-weight: 600; }
+.assist-row { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+.assist-avatars { display: flex; }
+.assist-av {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 9px; font-weight: 600;
+  border: 1.5px solid #fff; margin-left: -6px;
+}
+.assist-av:first-child { margin-left: 0; }
+.assist-lbl { font-size: 10px; color: var(--smax-grey-700); }
+
+/* KH no-Zalo (Chưa tìm / Không tìm thấy) — nền cam rất nhạt phân biệt, vẫn đang chăm sóc */
+.smax-table tbody tr.master-row.row-no-zalo { background: rgba(255, 145, 0, 0.035); }
+.smax-table tbody tr.master-row.row-no-zalo:hover { background: rgba(255, 145, 0, 0.07); }
+.smax-table tbody tr.master-row.row-no-zalo.open { background: var(--smax-primary-soft); }
 </style>

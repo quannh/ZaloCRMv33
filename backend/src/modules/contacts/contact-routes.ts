@@ -855,6 +855,22 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         tags: body.tags,
         metadata: body.metadata,
       };
+      // Hồ sơ KH tổng (CustomerProfileDialog 2026-06-03): cho sửa demographic +
+      // multi-phone từ UI hồ sơ. Chỉ patch khi field xuất hiện trong body (undefined → giữ nguyên).
+      if (body.gender !== undefined) updateData.gender = body.gender || null;
+      if (body.occupation !== undefined) updateData.occupation = body.occupation || null;
+      if (body.addressLine !== undefined) updateData.addressLine = body.addressLine || null;
+      if (body.province !== undefined) updateData.province = body.province || null;
+      if (body.district !== undefined) updateData.district = body.district || null;
+      if (body.birthYear !== undefined) {
+        const by = typeof body.birthYear === 'string' ? parseInt(body.birthYear, 10) : body.birthYear;
+        updateData.birthYear = Number.isFinite(by) && by > 1900 && by < 2100 ? by : null;
+      }
+      if (body.phonesExtra !== undefined) {
+        updateData.phonesExtra = Array.isArray(body.phonesExtra)
+          ? body.phonesExtra.filter((p: any) => p && typeof p.phone === 'string' && p.phone.trim())
+          : null;
+      }
       if (statusIdPatch !== undefined) {
         updateData.statusId = statusIdPatch;
       }
