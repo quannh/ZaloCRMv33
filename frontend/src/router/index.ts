@@ -215,6 +215,8 @@ const routes: RouteRecordRaw[] = [
       // Giữ route cũ → redirect để link cũ không 404.
       { path: 'care-listen', redirect: '/marketing/care-sessions' },
       { path: 'blocks',     name: 'Marketing.Blocks',     component: () => import('@/views/automation/BlocksView.vue'), meta: { resource: 'block' } },
+      // Mẫu tin nhắn (2026-06-09) — gộp quyền 'block'. Sale gõ "/" trong chat để chèn.
+      { path: 'templates', name: 'Marketing.Templates', component: () => import('@/views/automation/MessageTemplatesView.vue'), meta: { resource: 'block' } },
       { path: 'sequences',           name: 'Marketing.Sequences',     component: () => import('@/views/automation/SequencesView.vue'), meta: { resource: 'sequence' } },
       { path: 'sequences/:id/stats', name: 'Marketing.SequenceStats', component: () => import('@/views/automation/SequenceStatsView.vue'), meta: { resource: 'sequence' } },
       { path: 'broadcasts',           name: 'Marketing.Broadcasts',       component: () => import('@/views/automation/BroadcastsView.vue'), meta: { resource: 'broadcast' } },

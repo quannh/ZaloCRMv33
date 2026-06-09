@@ -24,80 +24,81 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  teams                     Team[]
-  users                     User[]
-  zaloAccounts              ZaloAccount[]
-  contacts                  Contact[]
-  contactAccess             ContactAccess[]
-  conversations             Conversation[]
-  appointments              Appointment[]
-  activityLogs              ActivityLog[]
-  dailyStats                DailyMessageStat[]
-  settings                  AppSetting[]
-  duplicateGroups           DuplicateGroup[]
-  savedReports              SavedReport[]
-  integrations              Integration[]
-  facebookLeadgenForms      FacebookLeadgenForm[]
-  automationRules           AutomationRule[]
-  messageTemplates          MessageTemplate[]
-  aiConfig                  AiConfig?
-  aiSuggestions             AiSuggestion[]
-  aiSuggestionsApplied      AiSuggestionApplied[]
-  pinnedConversations       PinnedConversation[]
-  groupPolls                GroupPoll[]
-  friendshipAttempts        FriendshipAttempt[]
-  friends                   Friend[]
-  statuses                  Status[]
-  parentCandidates          ParentCandidate[]
-  notes                     Note[]
-  zaloLabels                ZaloLabel[]
-  crmTags                   CrmTag[]
-  crmTagGroups              CrmTagGroup[]
+  teams                       Team[]
+  users                       User[]
+  zaloAccounts                ZaloAccount[]
+  contacts                    Contact[]
+  contactAccess               ContactAccess[]
+  conversations               Conversation[]
+  appointments                Appointment[]
+  activityLogs                ActivityLog[]
+  dailyStats                  DailyMessageStat[]
+  settings                    AppSetting[]
+  duplicateGroups             DuplicateGroup[]
+  savedReports                SavedReport[]
+  integrations                Integration[]
+  facebookLeadgenForms        FacebookLeadgenForm[]
+  automationRules             AutomationRule[]
+  messageTemplates            MessageTemplate[]
+  aiConfig                    AiConfig?
+  aiSuggestions               AiSuggestion[]
+  aiSuggestionsApplied        AiSuggestionApplied[]
+  pinnedConversations         PinnedConversation[]
+  groupPolls                  GroupPoll[]
+  friendshipAttempts          FriendshipAttempt[]
+  friends                     Friend[]
+  statuses                    Status[]
+  parentCandidates            ParentCandidate[]
+  notes                       Note[]
+  zaloLabels                  ZaloLabel[]
+  crmTags                     CrmTag[]
+  crmTagGroups                CrmTagGroup[]
   // Phase 6 — Lead Scoring Engine relations
-  scoringConfig             ScoringConfig?
-  scoreSignalRules          ScoreSignalRule[]
-  stageTransitionRules      StageTransitionRule[]
-  stuckThresholds           StuckThreshold[]
-  nbaTemplates              NbaTemplate[]
+  scoringConfig               ScoringConfig?
+  scoreSignalRules            ScoreSignalRule[]
+  stageTransitionRules        StageTransitionRule[]
+  stuckThresholds             StuckThreshold[]
+  nbaTemplates                NbaTemplate[]
   // Phase 6+ — Inbox Triage Filter relations
-  accountFolders            AccountFolder[]
-  savedFilterPresets        SavedFilterPreset[]
+  accountFolders              AccountFolder[]
+  savedFilterPresets          SavedFilterPreset[]
   // Phase 7 — Automation framework (Block / Sequence / Trigger / Broadcast / Campaign / Task)
-  blocks                    Block[]
-  blockFolders              BlockFolder[]
-  automationSequences       AutomationSequence[]
-  automationTriggers        AutomationTrigger[]
-  automationBroadcasts      AutomationBroadcast[]
-  automationCampaigns       AutomationCampaign[]
+  blocks                      Block[]
+  blockFolders                BlockFolder[]
+  messageTemplateFolders      MessageTemplateFolder[]
+  automationSequences         AutomationSequence[]
+  automationTriggers          AutomationTrigger[]
+  automationBroadcasts        AutomationBroadcast[]
+  automationCampaigns         AutomationCampaign[]
   // automationTasks       AutomationTask[]  ← REMOVED 2026-06-01 Luồng Mục Tiêu M0
-  automationEventLogs       AutomationEventLog[]
+  automationEventLogs         AutomationEventLog[]
   // CareSession (Phiên chăm sóc) 2026-06-07
-  careSessions              CareSession[]
+  careSessions                CareSession[]
   // RBAC Phase Phân Quyền 2026-05-21
-  departments               Department[]
-  permissionGroups          PermissionGroup[]
+  departments                 Department[]
+  permissionGroups            PermissionGroup[]
   // Phase ZaloAccounts redesign 2026-05-22 — status log uptime
-  zaloAccountStatusLog      ZaloAccountStatusLog[]
+  zaloAccountStatusLog        ZaloAccountStatusLog[]
   // Phase metrics layer 2026-05-22 — phone search log
-  phoneSearchEvents         PhoneSearchEvent[]
+  phoneSearchEvents           PhoneSearchEvent[]
   // Phase Privacy v2 2026-05-23 — nick chuyên dùng GỬI system notification cho cả org.
   // Admin pick bất kỳ nick connected. FK SET NULL khi nick bị xóa.
-  systemNotifyZaloAccountId String?                 @map("system_notify_zalo_account_id")
-  systemNotifyNick          ZaloAccount?            @relation("OrgSystemNotify", fields: [systemNotifyZaloAccountId], references: [id], onDelete: SetNull)
-  systemNotifyRecipients    SystemNotifyRecipient[]
-  systemNotifications       SystemNotification[]
+  systemNotifyZaloAccountId   String?                 @map("system_notify_zalo_account_id")
+  systemNotifyNick            ZaloAccount?            @relation("OrgSystemNotify", fields: [systemNotifyZaloAccountId], references: [id], onDelete: SetNull)
+  systemNotifyRecipients      SystemNotifyRecipient[]
+  systemNotifications         SystemNotification[]
   // CareSession 2026-06-07 — UID nhóm Zalo nhận thông báo "đích nhóm" (nhìn từ góc
   // nick hệ thống gửi, giống per-nick UID 1-1). Admin nhập tay ở Settings. Gửi qua
   // sendMessage(threadId, threadType=1). null = đích nhóm tắt.
-  internalNotifyGroupThreadId String?               @map("internal_notify_group_thread_id")
+  internalNotifyGroupThreadId String?                 @map("internal_notify_group_thread_id")
   // CareSession 2026-06-07 (anh chốt): "Lắng nghe & Nhắc chăm sóc" là cấu hình CHUNG
   // toàn tổ chức (KHÔNG per-trigger). 1 bộ quy tắc cho mọi Mục tiêu.
   //   careNotifyChannels: { "<eventKey>": { owner, manager, zaloGroup } }
   //     eventKey care event: reply|reactionPositive|reactionNegative|lead|block|friendAccept|friendReject
   //   careCloseConditions: { onStatusIds, onFriendTagIds, onCrmTagIds, silenceDays }
   // (Field cùng tên trên AutomationTrigger giữ lại làm legacy, backend đọc ORG trước.)
-  careNotifyChannels          Json?                  @map("care_notify_channels")
-  careCloseConditions         Json?                  @map("care_close_conditions")
+  careNotifyChannels          Json?                   @map("care_notify_channels")
+  careCloseConditions         Json?                   @map("care_close_conditions")
 
   // Phase user-create-with-zalo 2026-05-27 — config dùng cho welcome message tự động
   // khi admin tạo sale mới. Admin sửa toàn bộ template trong UI Thông báo hệ thống,
@@ -246,6 +247,9 @@ model User {
   createdBlocks             Block[]                 @relation("BlockCreatedBy")
   createdBlockFolders       BlockFolder[]           @relation("BlockFolderCreatedBy")
   ownedBlockFolders         BlockFolder[]           @relation("BlockFolderOwnerUser")
+  createdMessageTemplates   MessageTemplate[]       @relation("MessageTemplateCreatedBy")
+  createdMTFolders          MessageTemplateFolder[] @relation("MTFolderCreatedBy")
+  ownedMTFolders            MessageTemplateFolder[] @relation("MTFolderOwnerUser")
   createdSequences          AutomationSequence[]    @relation("SequenceCreatedBy")
   createdTriggers           AutomationTrigger[]     @relation("TriggerCreatedBy")
   createdBroadcasts         AutomationBroadcast[]   @relation("BroadcastCreatedBy")
@@ -1352,22 +1356,78 @@ model AutomationRule {
   @@map("automation_rules")
 }
 
+// MessageTemplate — câu mẫu sale gửi tay trong chat (gõ "/" để chèn).
+// 2026-06-09 (Anh chốt) NÂNG CẤP đồng bộ Khối: thêm folder + visibility per-item +
+// tagIds (4 tag dự án) + contentRich {text, styles[]} (định dạng Zalo: đậm/màu/cỡ).
+// Cơ chế quyền GỘP CHUNG resource 'block' + mô hình "là chủ HOẶC có grant":
+//   chủ (createdById) tạo/sửa mẫu RIÊNG của mình KHÔNG cần grant; đăng CÔNG KHAI cần grant block.create.
+// `content` (plain) LUÔN derive = contentRich.text ở route (dùng search + chèn chat).
+// `ownerUserId` LEGACY (null=team cũ): giữ dual-read, migrate → visibility+createdById.
 model MessageTemplate {
-  id          String   @id @default(uuid())
-  orgId       String   @map("org_id")
-  ownerUserId String?  @map("owner_user_id")
-  name        String
-  content     String
-  category    String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(uuid())
+  orgId            String    @map("org_id")
+  ownerUserId      String?   @map("owner_user_id") // LEGACY: null=team. Giữ migrate dual-read.
+  folderId         String?   @map("folder_id")
+  // visibility cho mẫu LẺ (folderId=null). Mẫu trong folder kế thừa folder.visibility.
+  // Default 'private' (an toàn — anh chốt mặc định Riêng tư cho mẫu mới).
+  visibility       String    @default("private") // 'public' | 'private'
+  name             String
+  // Từ khóa gõ tắt — sale gõ "/giaEGV" nhảy đúng mẫu (giống shortcut Zalo/Telegram).
+  // Lowercase không dấu cách. Popup match prefix theo shortcut TRƯỚC, rồi tên/nội dung.
+  shortcut         String?
+  content          String // plain text — LUÔN = contentRich.text (derive ở route), dùng search + chèn chat
+  contentRich      Json?     @map("content_rich") // { text: string, styles: [{st,start,len}] } — định dạng Zalo
+  category         String? // phân loại chức năng (FAQ/Chào/Chốt) — song song tagIds dự án
+  tagIds           String[]  @default([]) @map("tag_ids") // 4 tag dự án + free-form
+  usageCount       Int       @default(0) @map("usage_count")
+  lastUsedAt       DateTime? @map("last_used_at")
+  manualSendCount  Int       @default(0) @map("manual_send_count")
+  lastManualSentAt DateTime? @map("last_manual_sent_at")
+  archivedAt       DateTime? @map("archived_at") // soft delete
+  createdById      String?   @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  owner User?        @relation(fields: [ownerUserId], references: [id])
+  org       Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner     User?                  @relation(fields: [ownerUserId], references: [id])
+  folder    MessageTemplateFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  createdBy User?                  @relation("MessageTemplateCreatedBy", fields: [createdById], references: [id])
 
   @@index([orgId, ownerUserId])
   @@index([orgId, category])
+  @@index([orgId, folderId])
+  @@index([orgId, visibility])
+  @@index([orgId, archivedAt])
+  @@index([orgId, shortcut])
+  @@index([tagIds], type: Gin)
   @@map("message_templates")
+}
+
+// MessageTemplateFolder — nhóm thư mục cho Mẫu tin nhắn (copy y BlockFolder).
+// visibility='public' → mọi sale org dùng; 'private' → chỉ ownerUserId.
+// Phase 1 enforce parentId IS NULL ở route (1 cấp). Schema giữ parentId cho Phase 2.
+model MessageTemplateFolder {
+  id          String   @id @default(uuid())
+  orgId       String   @map("org_id")
+  name        String
+  visibility  String   @default("public") // 'public' | 'private'
+  parentId    String?  @map("parent_id")
+  ownerUserId String?  @map("owner_user_id")
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org       Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent    MessageTemplateFolder?  @relation("MTFolderNested", fields: [parentId], references: [id], onDelete: SetNull)
+  children  MessageTemplateFolder[] @relation("MTFolderNested")
+  ownerUser User?                   @relation("MTFolderOwnerUser", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdBy User                    @relation("MTFolderCreatedBy", fields: [createdById], references: [id])
+  templates MessageTemplate[]
+
+  @@index([orgId, visibility])
+  @@index([orgId, ownerUserId])
+  @@index([parentId])
+  @@map("message_template_folders")
 }
 
 model AiConfig {
@@ -2681,8 +2741,8 @@ model CareSession {
   orgId String @map("org_id")
 
   // ── Khóa nhận diện (lookup phiên mở theo tuple này, có index) ──
-  contactId String @map("contact_id")
-  nickId    String @map("nick_id")
+  contactId        String  @map("contact_id")
+  nickId           String  @map("nick_id")
   // Per-nick UID của khách (góc nhìn nick sale → nick khách) = Conversation.externalThreadId
   // = Friend.zaloUidInNick. Anh chốt 2026-06-08: phiên neo theo (nick, thread) để 1 nick có
   // 2 hội thoại cùng 1 Contact CHA vẫn tách phiên đúng. NULLABLE: phiên cũ + phiên no-Zalo

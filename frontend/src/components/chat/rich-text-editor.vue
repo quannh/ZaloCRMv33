@@ -237,6 +237,10 @@ const props = withDefaults(defineProps<{
   // Trình soạn nhiều dòng (BlockEditorDialog) set false → Enter + Shift+Enter đều
   // xuống dòng bình thường (anh hay dùng Shift+Enter). Fix "Enter không xuống dòng".
   submitOnEnter?: boolean;
+  // 2026-06-09: khi popup mẫu (gõ "/") đang mở, cha truyền hàm này để CHẶN ↑↓/Enter/Esc
+  // ở editor và chuyển cho popup điều hướng (vì popup Teleport ra body, không hứng được phím).
+  // Trả true = đã xử lý → editor consume, KHÔNG tự gửi/xuống dòng.
+  interceptKeys?: (event: KeyboardEvent) => boolean;
 }>(), {
   placeholder: 'Nhập tin nhắn...',
   showToolbar: false,
@@ -266,6 +270,13 @@ const editor = useEditor({
   ],
   editorProps: {
     handleKeyDown(_view, event) {
+      // Popup mẫu đang mở → nhường ↑↓/Enter/Esc cho popup điều hướng (chèn/đóng).
+      if (props.interceptKeys && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key)) {
+        if (props.interceptKeys(event)) {
+          event.preventDefault();
+          return true; // consume — không để Tiptap dời con trỏ / gửi tin
+        }
+      }
       if (event.key === 'Enter') {
         // Shift+Enter = LUÔN xuống dòng (soft break) ngay trong ô đang gõ, KHÔNG nhảy
         // focus sang ô khác. Tự chèn hardBreak + consume event (return true) để Tiptap/

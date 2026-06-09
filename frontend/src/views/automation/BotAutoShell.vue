@@ -89,6 +89,7 @@ const allNavItems: MktNavItem[] = [
   { to: '/marketing/care-sessions',     label: 'Phiên chăm sóc',     icon: 'mdi-account-heart',       resource: 'care_session' },
   { to: '/marketing/sequences',         label: 'Luồng kịch bản',     icon: 'mdi-format-list-numbered',resource: 'sequence' },
   { to: '/marketing/blocks',            label: 'Khối nội dung',      icon: 'mdi-puzzle',              resource: 'block' },
+  { to: '/marketing/templates',         label: 'Mẫu tin nhắn',       icon: 'mdi-message-text-outline',resource: 'block' },
   { to: '/marketing/broadcasts',        label: 'Gửi tin hàng loạt',  icon: 'mdi-bullhorn',            resource: 'broadcast' },
   { to: '/marketing/lists',             label: 'Tệp khách hàng',     icon: 'mdi-folder-account',      resource: 'customer_list' },
 ];

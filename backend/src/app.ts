@@ -69,6 +69,7 @@ import { savedReportRoutes } from './modules/analytics/saved-report-routes.js';
 import { integrationRoutes } from './modules/integrations/integration-routes.js';
 import { automationRoutes } from './modules/automation/automation-routes.js';
 import { templateRoutes } from './modules/automation/template-routes.js';
+import { templateFolderRoutes } from './modules/automation/template-folder-routes.js';
 // Phase 7 — Automation framework (Block / Sequence / Trigger / Broadcast)
 import { blockRoutes } from './modules/automation/blocks/block-routes.js';
 import { blockFolderRoutes } from './modules/automation/blocks/block-folder-routes.js';
@@ -240,6 +241,7 @@ async function bootstrap() {
   await app.register(integrationRoutes);
   await app.register(automationRoutes);
   await app.register(templateRoutes);
+  await app.register(templateFolderRoutes);
   // Phase 7 — Block authoring layer (must register BEFORE sequence/trigger/broadcast in later phases)
   await app.register(blockRoutes);
   await app.register(blockFolderRoutes);

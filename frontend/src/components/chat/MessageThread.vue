@@ -556,12 +556,15 @@
           </div>
           </NickAvatarLock>
 
-          <div class="editor-wrap" :class="{ 'editor-locked': !privacyVisibility.canSendInConv(conversation) }">
+          <div ref="editorWrapRef" class="editor-wrap" :class="{ 'editor-locked': !privacyVisibility.canSendInConv(conversation) }">
             <QuickTemplatePopup
+              ref="templatePopupRef"
               :visible="showTemplatePopup"
               :query="templateQuery"
               :templates="templates"
               :contact="conversation.contact"
+              :sale-full-name="_authStore.user?.fullName ?? null"
+              :anchor-el="editorWrapRef"
               @select="onTemplateSelect"
               @close="showTemplatePopup = false"
             />
@@ -570,6 +573,7 @@
               v-model="inputText"
               :placeholder="inputPlaceholder"
               :show-toolbar="formatBarVisible"
+              :intercept-keys="onComposerNavKey"
               class="input-editor"
               @submit="handleSend"
               @typing="onTypingEvent"
@@ -912,7 +916,11 @@ import { useFriendSocket } from '@/composables/use-friend-socket';
 import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 import { registerPendingTags, clearPendingTags } from '@/composables/use-pending-mutations';
 
-interface TemplateItem { id: string; name: string; content: string; category: string | null; isPersonal: boolean; }
+interface TemplateItem {
+  id: string; name: string; shortcut?: string | null; content: string; category: string | null; isPersonal: boolean;
+  contentRich?: { text: string; styles?: Array<{ st: string; start: number; len: number }> } | null;
+  tagIds?: string[];
+}
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -1010,6 +1018,8 @@ async function onLinkedParent() {
   emit('refresh-thread');
 }
 const editorRef = ref<InstanceType<typeof RichTextEditor> | null>(null);
+const editorWrapRef = ref<HTMLElement | null>(null); // anchor cho QuickTemplatePopup (Teleport ra body)
+const templatePopupRef = ref<InstanceType<typeof QuickTemplatePopup> | null>(null);
 const currentTypers = computed(() => props.typingUsers || []);
 
 // 2026-05-22 anh chốt Zalo native UX: chỉ tin OUTGOING CUỐI CÙNG mới hiện
@@ -2291,29 +2301,62 @@ async function consumeDraftFromQuery() {
 onMounted(() => { void consumeDraftFromQuery(); });
 watch(() => _draftRoute.query.draft, () => { void consumeDraftFromQuery(); });
 
+// Vị trí "/" mở popup — lưu để khi chọn mẫu chỉ cắt từ ĐÚNG dấu "/" này (không lastIndexOf
+// toàn chuỗi, tránh cắt nhầm URL/giá kiểu "50tr/m2"). Reset khi đóng popup.
+const slashTriggerPos = ref(-1);
+
 function onTypingEvent() {
   emit('typing');
   const value = inputText.value;
-  if (value === '/' || /\s\/$/.test(value)) {
+  // Trigger "/" chỉ ở ĐẦU dòng hoặc sau khoảng trắng (KHÔNG anywhere) — tránh phá "50tr/m2", URL.
+  if (value === '/' || /(^|\s)\/$/.test(value)) {
     showTemplatePopup.value = true;
+    slashTriggerPos.value = value.length - 1; // vị trí "/" vừa gõ
     templateQuery.value = '';
   } else if (showTemplatePopup.value) {
-    const lastSlash = value.lastIndexOf('/');
-    if (lastSlash === -1) showTemplatePopup.value = false;
-    else templateQuery.value = value.slice(lastSlash + 1);
+    const pos = slashTriggerPos.value;
+    // Popup đóng nếu "/" trigger bị xóa hoặc con trỏ lùi trước nó.
+    if (pos < 0 || pos >= value.length || value[pos] !== '/') {
+      showTemplatePopup.value = false;
+      slashTriggerPos.value = -1;
+    } else {
+      templateQuery.value = value.slice(pos + 1);
+    }
   }
 }
 
 function openTemplatePopup() {
   showTemplatePopup.value = true;
+  slashTriggerPos.value = -1; // mở bằng nút → không có "/" cần cắt
   templateQuery.value = '';
 }
 
-function onTemplateSelect(rendered: string) {
-  const lastSlash = inputText.value.lastIndexOf('/');
-  inputText.value = lastSlash >= 0 ? inputText.value.slice(0, lastSlash) + rendered : rendered;
+// Popup mẫu Teleport ra body nên KHÔNG hứng được phím từ ô nhập. RichTextEditor gọi hàm này
+// (qua prop intercept-keys) khi nhấn ↑↓/Enter/Esc — nếu popup đang mở thì chuyển cho popup
+// điều hướng (chọn/chèn/đóng) và trả true để editor KHÔNG dời con trỏ / gửi tin.
+function onComposerNavKey(event: KeyboardEvent): boolean {
+  if (!showTemplatePopup.value) return false;
+  templatePopupRef.value?.onKey(event);
+  return true;
+}
+
+// Chèn mẫu: giữ định dạng đậm/màu qua applyRichPayload (biến đã render + re-anchor offset ở popup).
+// Thay nội dung ô bằng (text trước "/") + mẫu. KHÔNG auto-send — sale tự Enter.
+function onTemplateSelect(payload: { text: string; styles?: Array<{ st: string; start: number; len: number }> }, templateId: string) {
+  const pos = slashTriggerPos.value;
+  const before = pos >= 0 ? inputText.value.slice(0, pos) : '';
+  const merged = before + payload.text;
+  // Dịch styles theo độ dài phần "before" (mẫu được nối sau before).
+  const shift = before.length;
+  const mergedStyles = (payload.styles ?? []).map((s) => ({ ...s, start: s.start + shift }));
+  // Nạp vào editor giữ định dạng. applyRichPayload setContent toàn bộ ô.
+  (editorRef.value as any)?.applyRichPayload?.({ text: merged, styles: mergedStyles }, { focus: true });
+  inputText.value = merged;
   showTemplatePopup.value = false;
+  slashTriggerPos.value = -1;
   templateQuery.value = '';
+  // Track use (non-blocking)
+  api.post(`/automation/templates/${templateId}/track-use`).catch(() => {});
 }
 
 // ── M14 (2026-06-02): Chèn Khối tin nhắn (Automation Blocks) vào composer ──
