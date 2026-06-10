@@ -57,11 +57,11 @@
       <v-alert v-if="senderError" type="error" density="compact" class="mt-3">{{ senderError }}</v-alert>
     </v-card>
 
-    <!-- KPI tình trạng kênh -->
+    <!-- KPI tình trạng kênh (2026-06-10: theo cơ chế Check Live) -->
     <div class="sn-kpi-grid">
       <div class="sn-kpi green"><div class="sn-kpi-val">{{ summary.ready || 0 }}</div><div class="sn-kpi-lbl">✅ Sẵn sàng nhận</div></div>
-      <div class="sn-kpi amber"><div class="sn-kpi-val">{{ (summary.uid_not_found || 0) + (summary.missing_internal_phone || 0) }}</div><div class="sn-kpi-lbl">🟡 Chưa có UID</div></div>
-      <div class="sn-kpi red"><div class="sn-kpi-val">{{ (summary.missing_internal_contact || 0) + (summary.lookup_failed || 0) + (summary.sender_disconnected || 0) }}</div><div class="sn-kpi-lbl">🔴 Thiếu nick / lỗi</div></div>
+      <div class="sn-kpi amber"><div class="sn-kpi-val">{{ (summary.uid_not_found || 0) + (summary.missing_internal_contact || 0) + (summary.missing_internal_phone || 0) }}</div><div class="sn-kpi-lbl">🟡 Chưa Check Live</div></div>
+      <div class="sn-kpi red"><div class="sn-kpi-val">{{ (summary.lookup_failed || 0) + (summary.sender_disconnected || 0) + (summary.missing_system_sender || 0) }}</div><div class="sn-kpi-lbl">🔴 Lỗi / offline</div></div>
       <div class="sn-kpi"><div class="sn-kpi-val">{{ recipients.length }}</div><div class="sn-kpi-lbl">Tổng nhân viên</div></div>
     </div>
       </v-window-item>
@@ -196,11 +196,11 @@
 
       <!-- ════ TAB 3: NHÂN VIÊN NHẬN ════ -->
       <v-window-item value="people">
-    <!-- KPI -->
+    <!-- KPI (2026-06-10: theo cơ chế Check Live — xanh sẵn sàng / vàng chưa kiểm / đỏ lỗi) -->
     <div class="sn-kpi-grid">
-      <div class="sn-kpi green"><div class="sn-kpi-val">{{ summary.ready || 0 }}</div><div class="sn-kpi-lbl">✅ Đã có UID</div></div>
-      <div class="sn-kpi amber"><div class="sn-kpi-val">{{ (summary.uid_not_found || 0) + (summary.missing_internal_phone || 0) }}</div><div class="sn-kpi-lbl">🟡 Chưa có UID</div></div>
-      <div class="sn-kpi red"><div class="sn-kpi-val">{{ (summary.missing_internal_contact || 0) + (summary.lookup_failed || 0) + (summary.sender_disconnected || 0) }}</div><div class="sn-kpi-lbl">🔴 Lỗi / thiếu nick</div></div>
+      <div class="sn-kpi green"><div class="sn-kpi-val">{{ summary.ready || 0 }}</div><div class="sn-kpi-lbl">✅ Sẵn sàng nhận</div></div>
+      <div class="sn-kpi amber"><div class="sn-kpi-val">{{ (summary.uid_not_found || 0) + (summary.missing_internal_contact || 0) + (summary.missing_internal_phone || 0) }}</div><div class="sn-kpi-lbl">🟡 Chưa Check Live</div></div>
+      <div class="sn-kpi red"><div class="sn-kpi-val">{{ (summary.lookup_failed || 0) + (summary.sender_disconnected || 0) + (summary.missing_system_sender || 0) }}</div><div class="sn-kpi-lbl">🔴 Lỗi / offline</div></div>
       <div class="sn-kpi"><div class="sn-kpi-val">{{ recipients.length }}</div><div class="sn-kpi-lbl">Tổng nhân viên</div></div>
     </div>
 
@@ -235,8 +235,8 @@
             <th>Nhân viên</th>
             <th>Phòng ban</th>
             <th>Chức vụ</th>
-            <th>Nick liên lạc nội bộ</th>
-            <th>UID góc nhìn nick gửi</th>
+            <th>SĐT nhân viên</th>
+            <th>UID (góc nhìn nick gửi)</th>
             <th>Trạng thái</th>
             <th class="text-right">Action</th>
           </tr>
@@ -255,20 +255,18 @@
               </div>
             </td>
             <td>
-              <div class="font-weight-medium">{{ row.internalContactNick?.displayName || 'Chưa chọn' }}</div>
-              <div class="text-caption text-medium-emphasis">
-                {{ row.internalContactNick?.phone || 'Chưa có SĐT' }}
-              </div>
+              <span v-if="row.user.phone" class="font-weight-medium">{{ row.user.phone }}</span>
+              <v-chip v-else size="x-small" color="warning" variant="tonal">Chưa có SĐT</v-chip>
             </td>
             <td>
               <span v-if="row.recipient.threadIdInSenderView" class="uid-text">{{ row.recipient.threadIdInSenderView }}</span>
-              <span v-else class="text-medium-emphasis">Chưa có</span>
+              <span v-else class="text-medium-emphasis">—</span>
             </td>
             <td>
               <v-chip size="small" :color="statusColor(row.recipient.status)" variant="tonal">
                 {{ statusLabel(row.recipient.status) }}
               </v-chip>
-              <div v-if="row.recipient.error" class="text-caption text-medium-emphasis mt-1">
+              <div v-if="row.recipient.error" class="text-caption text-medium-emphasis mt-1 recipient-err">
                 {{ row.recipient.error }}
               </div>
             </td>
@@ -277,6 +275,7 @@
                 size="small"
                 variant="tonal"
                 color="primary"
+                prepend-icon="mdi-account-search"
                 :loading="lookupUserId === row.user.id"
                 :disabled="!canLookup(row)"
                 @click="lookupUid(row)"
@@ -932,15 +931,16 @@ function statusColor(status: string) {
 }
 
 function statusLabel(status: string) {
+  // 2026-06-10: nhãn theo cơ chế MỚI (Check Live), bỏ khái niệm "nick nội bộ" cũ.
   return ({
-    ready: 'Đã có UID',
+    ready: 'Sẵn sàng nhận',
     missing_system_sender: 'Chưa chọn nick gửi',
-    missing_internal_contact: 'Chưa chọn nick nội bộ',
-    missing_internal_phone: 'Nick nội bộ thiếu SĐT',
+    missing_internal_contact: 'Chưa Check Live',
+    missing_internal_phone: 'Thiếu SĐT',
     sender_disconnected: 'Nick gửi offline',
-    uid_not_found: 'Chưa có UID',
+    uid_not_found: 'Chưa có UID / lệch',
     lookup_failed: 'Lỗi tìm UID',
-    invalid: 'Invalid',
+    invalid: 'Chưa kiểm tra',
   } as Record<string, string>)[status] || status;
 }
 
@@ -1325,6 +1325,15 @@ onMounted(async () => {
 .uid-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+}
+/* Text lỗi/cảnh báo lệch người — giới hạn 2 dòng, không vỡ layout HD 1366 */
+.recipient-err {
+  max-width: 240px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ══════ Atlas v3 — Tin chào mừng kiểu "edit block Zalo" (2026-06-08) ══════

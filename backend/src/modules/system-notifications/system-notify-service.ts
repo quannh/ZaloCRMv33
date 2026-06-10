@@ -204,7 +204,7 @@ export async function resolveSystemNotifyRecipient(orgId: string, targetUserId: 
     }),
     prisma.user.findFirst({
       where: { id: targetUserId, orgId },
-      select: { id: true, internalContactZaloAccountId: true },
+      select: { id: true, phone: true, internalContactZaloAccountId: true },
     }),
   ]);
 
@@ -225,42 +225,35 @@ export async function resolveSystemNotifyRecipient(orgId: string, targetUserId: 
     conversationId = existingRecipient?.conversationId ?? null;
   }
 
+  // 2026-06-10 (CEO-review): status theo cơ chế MỚI — dựa trên ĐÃ CÓ UID
+  // (threadIdInSenderView, từ luồng tạo user / Check Live) chứ KHÔNG dựa "đã chọn
+  // nick nội bộ" (cơ chế cũ đã bỏ). targetUser.phone là SĐT để Check Live.
   if (!targetUser) {
     error = 'User không tồn tại trong org';
   } else if (!senderId) {
     status = 'missing_system_sender';
     error = 'Org chưa chọn nick gửi thông báo hệ thống';
-  } else if (!internalId) {
-    status = 'missing_internal_contact';
-    error = 'User chưa chọn nick liên lạc nội bộ';
   } else {
-    const [sender, internalNick] = await Promise.all([
-      prisma.zaloAccount.findFirst({
-        where: { id: senderId, orgId },
-        select: { id: true, status: true },
-      }),
-      prisma.zaloAccount.findFirst({
-        where: { id: internalId, orgId },
-        select: { id: true, phone: true },
-      }),
-    ]);
+    const sender = await prisma.zaloAccount.findFirst({
+      where: { id: senderId, orgId },
+      select: { id: true, status: true },
+    });
 
     if (!sender) {
       status = 'missing_system_sender';
       error = 'Nick gửi hệ thống không tồn tại trong org';
-    } else if (!internalNick) {
-      status = 'missing_internal_contact';
-      error = 'Nick liên lạc nội bộ không tồn tại trong org';
     } else if (!threadIdInSenderView) {
-      status = internalNick.phone ? 'uid_not_found' : 'missing_internal_phone';
-      error = internalNick.phone
-        ? 'Chưa tìm UID của nick nội bộ theo góc nhìn nick gửi hệ thống'
-        : 'Nick liên lạc nội bộ chưa có SĐT để tìm UID';
+      // Chưa có UID — phân biệt do thiếu SĐT hay chưa Check Live
+      status = targetUser.phone ? 'missing_internal_contact' : 'missing_internal_phone';
+      error = targetUser.phone
+        ? 'Chưa Check Live để tìm UID (bấm "Check Live" hoặc "Check hàng loạt")'
+        : 'Nhân viên chưa có SĐT để tìm UID';
     } else if (sender.status !== 'connected') {
       status = 'sender_disconnected';
       error = 'Nick gửi hệ thống đang offline';
     } else {
       status = 'ready';
+      error = null;
     }
   }
 
