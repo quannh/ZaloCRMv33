@@ -216,7 +216,15 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         })
         .filter((c) => !multiNickOnly || (c.childrenCount ?? 0) > 1);
 
-      return { contacts: enriched, total, page: pageNum, limit: limitNum };
+      // PRIVACY 2026-06-11 (audit H3): blur PII của KH thuộc nick main non-owner.
+      // Detail KH đã redact, list cũng phải nhất quán (nếu không đọc list = vượt rào).
+      const { buildPrivacyContext, buildOffendingContactIds, redactContact } =
+        await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const offending = await buildOffendingContactIds(enriched.map((c) => c.id), privacyCtx);
+      const out = enriched.map((c) => (offending.has(c.id) ? redactContact(c, privacyCtx) : c));
+
+      return { contacts: out, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] List error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contacts' });
@@ -340,10 +348,19 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         }),
       );
 
+      // PRIVACY 2026-06-11 (audit H5): blur card KH thuộc nick main non-owner.
+      const { buildPrivacyContext, buildOffendingContactIds, redactContact } =
+        await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const allCardIds = Object.values(contactsByStatus).flat().map((c: any) => c.id);
+      const offending = await buildOffendingContactIds(allCardIds, privacyCtx);
+
       const result = pipeline.map((g) => ({
         status: g.status ?? 'unknown',
         count: g._count,
-        contacts: contactsByStatus[g.status ?? 'unknown'] ?? [],
+        contacts: (contactsByStatus[g.status ?? 'unknown'] ?? []).map((c: any) =>
+          offending.has(c.id) ? redactContact(c, privacyCtx) : c,
+        ),
       }));
 
       return { pipeline: result };
@@ -1344,7 +1361,19 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         }),
       );
 
-      return { groups: expanded, total, page: pageNum, limit: limitNum };
+      // PRIVACY 2026-06-11 (audit H6): blur PII KH thuộc nick main non-owner trong
+      // các nhóm trùng (detector gom toàn org). Batch 1 lần qua tất cả contactId.
+      const { buildPrivacyContext, buildOffendingContactIds, redactContact } =
+        await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const allIds = expanded.flatMap((g) => g.contacts.map((c: any) => c.id));
+      const offending = await buildOffendingContactIds(allIds, privacyCtx);
+      const safeGroups = expanded.map((g) => ({
+        ...g,
+        contacts: g.contacts.map((c: any) => (offending.has(c.id) ? redactContact(c, privacyCtx) : c)),
+      }));
+
+      return { groups: safeGroups, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] Duplicates list error:', err);
       return reply.status(500).send({ error: 'Failed to fetch duplicate groups' });
@@ -1446,13 +1475,27 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
               phone: true,
               zaloUid: true,
               avatarUrl: true,
+              // PRIVACY 2026-06-11 (audit H4): cần để redactFriend quyết định blur.
+              privacyMode: true,
+              ownerUserId: true,
               owner: { select: { id: true, fullName: true } },
             },
           },
         },
         orderBy: { lastInboundAt: { sort: 'desc', nulls: 'last' } },
       });
-      return { friendships };
+      // Blur alias/zaloUidInNick/danh tính + che phone/zaloUid của nick main non-owner.
+      const { buildPrivacyContext, redactFriend } = await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const redactedFriendships = friendships.map((f) => {
+        const rf: any = redactFriend(f as any, privacyCtx);
+        // Che thêm field trên zaloAccount (nick main non-owner): phone + zaloUid của nick.
+        if (rf.redacted && rf.zaloAccount && rf.zaloAccount.privacyMode === 'main') {
+          rf.zaloAccount = { ...rf.zaloAccount, phone: null, zaloUid: null };
+        }
+        return rf;
+      });
+      return { friendships: redactedFriendships };
     } catch (err) {
       logger.error('[contacts] List friendships error:', err);
       return reply.status(500).send({ error: 'Failed to list friendships' });
@@ -2202,7 +2245,14 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where: { id: { in: allIds }, orgId: user.orgId },
         select: { id: true, fullName: true, phone: true, zaloUid: true, zaloGlobalId: true, avatarUrl: true, parentContactId: true },
       });
-      const byId = new Map(contacts.map(c => [c.id, c]));
+      // PRIVACY 2026-06-11 (audit H7): blur PII KH thuộc nick main non-owner.
+      const { buildPrivacyContext, buildOffendingContactIds, redactContact } =
+        await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const offending = await buildOffendingContactIds(allIds, privacyCtx);
+      const byId = new Map(
+        contacts.map((c) => [c.id, offending.has(c.id) ? redactContact(c, privacyCtx) : c]),
+      );
       const enriched = candidates.map(c => ({
         ...c,
         contacts: c.contactIds.map(id => byId.get(id)).filter(Boolean),
