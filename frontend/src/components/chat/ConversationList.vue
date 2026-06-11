@@ -578,6 +578,13 @@ function displayName(conv: Conversation): string {
     if (isUsableName(conv.contact?.fullName)) return conv.contact!.fullName!;
     return 'Nhóm Zalo';
   }
+  // 2026-06-11 (anh chốt) — Trên nick RIÊNG TƯ, CHÍNH CHỦ nick xem thấy TÊN ZALO THẬT
+  // của khách (Contact.fullName) thay vì "tên gợi nhớ" (alias sale tự đặt). Người ngoài
+  // (cấp trên/admin) KHÔNG đổi → vẫn ưu tiên alias như cũ. (TÊN không phải nội dung tin
+  // nhắn nên không vi phạm privacy — chỉ tin nhắn mới blur; xem use-privacy-visibility.)
+  if (privacyVisibility.isOwnerOfPrivateNick(conv)) {
+    if (isUsableName(conv.contact?.fullName)) return conv.contact!.fullName!;
+  }
   // Ưu tiên Tên gợi nhớ Zalo (Friend.aliasInNick) — sync 2-way với Zalo Real.
   // Fallback fullName (tên Zalo gốc). KHÔNG dùng Contact.crmName để UI khớp Zalo Real.
   if (isUsableName(conv.friendship?.aliasInNick)) return conv.friendship!.aliasInNick!;
