@@ -36,6 +36,7 @@ export const RESOURCES = [
   'audit_log',          // Activity / Audit log
   'settings',           // App settings
   'care_session',       // Phiên chăm sóc (CareSession) — 2026-06-07
+  'media',              // Kho phương tiện (ảnh/album/file/video) — 2026-06-11
 ] as const;
 export type Resource = (typeof RESOURCES)[number];
 
@@ -60,6 +61,9 @@ export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
   settings: ['access', 'create', 'edit'],
   // Phiên chăm sóc — access=xem phiên mình, view_all=xem cả org (scope theo dept tree).
   care_session: ['access', 'view_all'],
+  // Kho phương tiện — access=xem/dùng kho, create=tải lên/lưu, edit=sửa quyền/tag/watermark,
+  // delete=archive, view_all=xem cả org bỏ qua scope owner (admin/marketing).
+  media: ['access', 'create', 'edit', 'delete', 'view_all'],
 };
 
 // JSON shape lưu trong permission_groups.grants:

@@ -56,6 +56,14 @@
           <span class="ctx-item__label">Chuyển tiếp</span>
         </button>
 
+        <!-- Lưu vào Media (chỉ tin có media: ảnh/video/tệp) — Phase Media Library 2026-06-11 -->
+        <button v-if="isMediaMessage" class="ctx-item" role="menuitem" @click="onAction('save-media')">
+          <svg class="ctx-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span class="ctx-item__label">Lưu vào Media</span>
+        </button>
+
         <!-- Thu hồi (self only) -->
         <button v-if="isSelf" class="ctx-item" role="menuitem" @click="onAction('undo')">
           <svg class="ctx-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -98,7 +106,13 @@ const emit = defineEmits<{
   undo: [];
   forward: [];
   copy: [];
+  'save-media': [];
 }>();
+
+// Tin có media (ảnh/video/tệp) → hiện "Lưu vào Media". Phase Media Library 2026-06-11.
+const isMediaMessage = computed(() =>
+  ['image', 'video', 'file'].includes(props.message?.contentType ?? ''),
+);
 
 const menuRef = ref<HTMLElement | null>(null);
 const flipUp = ref(false);
@@ -181,14 +195,15 @@ onBeforeUnmount(() => {
 function close() {
   emit('update:modelValue', false);
 }
-function onAction(name: 'reply' | 'edit' | 'forward' | 'undo' | 'delete') {
+function onAction(name: 'reply' | 'edit' | 'forward' | 'undo' | 'delete' | 'save-media') {
   // Switch để TS narrow đúng từng emit signature (union không inferr được)
   switch (name) {
-    case 'reply':   emit('reply');   break;
-    case 'edit':    emit('edit');    break;
-    case 'forward': emit('forward'); break;
-    case 'undo':    emit('undo');    break;
-    case 'delete':  emit('delete');  break;
+    case 'reply':      emit('reply');      break;
+    case 'edit':       emit('edit');       break;
+    case 'forward':    emit('forward');    break;
+    case 'undo':       emit('undo');       break;
+    case 'delete':     emit('delete');     break;
+    case 'save-media': emit('save-media'); break;
   }
   close();
 }
