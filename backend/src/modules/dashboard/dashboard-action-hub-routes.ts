@@ -246,14 +246,16 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         where: { orgId: viewer.orgId, ownerUserId: targetUserId, privacyMode: 'sub', archivedAt: null },
         select: { id: true },
       });
-      // Urgent list — CRM rule 2026-05-29: "🔥 Cần rep gấp" chỉ rep với user 1-1.
+      // "Cần rep gấp" (anh chốt 2026-06-11): tin chủ nick CHƯA ĐỌC (unreadCount>0,
+      // reset 0 khi chủ nick gửi — xem message-handler updateConversationAfterMessage),
+      // chỉ 1-1 + nick công khai. Sắp MỚI NHẤT trước (tin vừa tới = gấp nhất), KHÔNG
+      // phải cũ nhất (trước đây asc → hiện toàn KH 18-20 ngày cũ, gây hiểu nhầm).
       const urgentConvs = await prisma.conversation.findMany({
         where: {
           orgId: viewer.orgId,
           zaloAccountId: { in: publicNicks.map((n) => n.id) },
           threadType: 'user',
           deletedAt: null,
-          isReplied: false,
           unreadCount: { gt: 0 },
           contactId: { not: null },
         },
@@ -271,7 +273,7 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
           },
           zaloAccount: { select: { id: true, displayName: true } },
         },
-        orderBy: { lastMessageAt: 'asc' }, // oldest first → most urgent
+        orderBy: { lastMessageAt: 'desc' }, // mới nhất trước → tin vừa tới, chưa đọc = gấp nhất
         take: 5,
       });
 
