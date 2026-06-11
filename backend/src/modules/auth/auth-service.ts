@@ -9,6 +9,7 @@
  */
 import bcrypt from 'bcryptjs';
 import { prisma, tenantTransaction } from '../../shared/database/prisma-client.js';
+import { getOwnerScope } from '../rbac/owner-scope.js';
 import { logger } from '../../shared/utils/logger.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
 import { runSystemQuery } from '../../shared/tenant/tenant-context.js';
@@ -183,6 +184,9 @@ export async function getProfile(userId: string) {
       org: { select: { id: true, name: true, timezone: true } },
       // RBAC enforce 2026-06-08 — trả grants để frontend biết user hiện tại được vào màn nào.
       permissionGroup: { select: { id: true, name: true, grants: true, archivedAt: true } },
+      // Dashboard v4 2026-06-11 — vai trò phòng ban để FE quyết hiện mấy tab dashboard
+      // (sale 1 tab / trưởng phòng 2 / admin 3).
+      departmentMember: { select: { deptRole: true, departmentId: true } },
     },
   });
 
@@ -199,10 +203,24 @@ export async function getProfile(userId: string) {
   // owner + admin = toàn quyền (anh chốt 2026-06-08) — khớp fallback trong userHasGrant.
   const isFullAccess = user.role === 'owner' || user.role === 'admin';
 
+  // Dashboard v4 — deptRole + canViewAll cho role-tab. canViewAll gồm cả grant
+  // view_all (vd Marketing/CEO không phải leader nhưng được xem team). getOwnerScope:
+  // admin/owner short-circuit 0 query; member thường +1 query; leader/deputy +2 query.
+  // /profile gọi 1 lần/load app → chấp nhận được.
+  const deptRole = user.departmentMember?.deptRole ?? null;
+  const departmentId = user.departmentMember?.departmentId ?? null;
+  const ownerScope = await getOwnerScope({ userId: user.id, orgId: user.orgId, legacyRole: user.role });
+
+  // Bỏ departmentMember thô khỏi payload (đã rút ra deptRole/departmentId).
+  const { departmentMember: _dm, ...rest } = user;
+
   return {
-    ...user,
+    ...rest,
     permissionGroup: pg ? { id: pg.id, name: pg.name, grants } : null,
     grants,
     isFullAccess,
+    deptRole,
+    departmentId,
+    canViewAll: ownerScope.canViewAll,
   };
 }

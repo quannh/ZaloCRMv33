@@ -1,70 +1,71 @@
 <template>
-  <div class="dh-wrap">
-    <!--
-      ATTRIBUTION BANNER — Required by Apache License 2.0 NOTICE clause §4(d).
-      Source data is obfuscated in src/composables/use-attribution.ts; see that
-      file + the NOTICE file at the repository root before modifying.
-      Removing this element is a license violation unless you hold a commercial
-      license from the maintainer (locnt@locnguyendata.com).
-    -->
-    <a
-      v-if="attribution.enabled.value"
-      class="contact-marquee dashboard-marquee"
-      :href="attribution.href"
-      target="_blank"
-      rel="noopener"
-      :title="attribution.text"
-    >
-      <span class="marquee-track">
-        {{ attribution.text }}&nbsp;•&nbsp;{{ attribution.text }}&nbsp;•&nbsp;
-      </span>
-    </a>
-
-    <!-- Sticky scroll-nav theo role -->
-    <div class="dh-scrollnav" v-if="hub.hasTeamSection.value || hub.hasSystemSection.value">
-      <a href="#dh-sec-me" class="dh-crumb" :class="{ active: activeSection === 'me' }">🎯 Việc của tôi</a>
-      <span class="dh-sep" v-if="hub.hasTeamSection.value">›</span>
-      <a v-if="hub.hasTeamSection.value" href="#dh-sec-team" class="dh-crumb" :class="{ active: activeSection === 'team' }">👥 Quản lý team</a>
-      <span class="dh-sep" v-if="hub.hasSystemSection.value">›</span>
-      <a v-if="hub.hasSystemSection.value" href="#dh-sec-system" class="dh-crumb" :class="{ active: activeSection === 'system' }">🛡️ Quản lý hệ thống</a>
-      <span class="dh-sn-hint">Cuộn xuống để xem section tiếp →</span>
+  <div class="airtable-scope dh-v4">
+    <!-- Attribution marquee (Apache License) -->
+    <div v-if="attribution.enabled.value" class="dh-attr">
+      <a :href="attribution.href" target="_blank" rel="noopener">{{ attribution.text }}</a>
     </div>
 
-    <!-- ━━━━━━━━━━ SECTION 1 — VIỆC CỦA TÔI ━━━━━━━━━━ -->
-    <section id="dh-sec-me" class="dh-section">
-      <div class="dh-strip first">
-        <div class="dh-strip-icon self">🎯</div>
-        <div class="dh-strip-text">
-          <div class="dh-strip-title">
-            Việc của tôi
-            <!-- Picker scope chip -->
-            <span
-              class="dh-scope self"
-              :class="{ locked: !hub.hasTeamSection.value && !hub.hasSystemSection.value }"
-              @click="canPickUser && (userPickerOpen = !userPickerOpen)"
-            >
-              👤 {{ currentViewedUserName }}
-              <span v-if="canPickUser" class="dh-caret">▾</span>
-              <span v-else class="dh-lock-ico">🔒</span>
+    <!-- ── Role-tab strip — chỉ hiện khi có quyền >1 tab (sale ẩn) ── -->
+    <div v-if="hub.hasTeamSection.value || hub.hasSystemSection.value" class="at-roletabs">
+      <button class="at-roletab" :class="{ 'is-active': activeTab === 'me' }" @click="activeTab = 'me'">
+        <Target :size="16" :stroke-width="2" /> Việc của tôi
+      </button>
+      <button
+        v-if="hub.hasTeamSection.value"
+        class="at-roletab"
+        :class="{ 'is-active': activeTab === 'team' }"
+        @click="activeTab = 'team'"
+      >
+        <Users :size="16" :stroke-width="2" /> Quản lý team
+        <span v-if="teamBacklog > 0" class="at-roletab__cnt">{{ teamBacklog }}</span>
+      </button>
+      <button
+        v-if="hub.hasSystemSection.value"
+        class="at-roletab"
+        :class="{ 'is-active': activeTab === 'system' }"
+        @click="activeTab = 'system'"
+      >
+        <Shield :size="16" :stroke-width="2" /> Quản lý hệ thống
+      </button>
+      <div class="at-roletabs__spacer"></div>
+      <!-- Scope mirror (theo tab đang xem) -->
+      <button
+        v-if="activeTab === 'system'"
+        class="at-roletabs__scope is-locked"
+      >
+        <Shield :size="14" :stroke-width="2" /> Toàn tổ chức <Lock :size="13" :stroke-width="2" />
+      </button>
+    </div>
 
-              <!-- Picker dropdown -->
-              <div v-if="userPickerOpen" class="dh-picker-dd" @click.stop>
-                <input
-                  v-model="userPickerSearch"
-                  class="dh-pdd-search"
-                  placeholder="🔍 Tìm nhân viên..."
-                  @click.stop
-                >
-                <div class="dh-pdd-group">CỦA TÔI</div>
-                <div
-                  class="dh-pdd-item"
-                  :class="{ active: hub.viewAsUserId.value === null }"
-                  @click="selectUser(null)"
-                >
-                  👤 {{ auth.user?.fullName }} (tôi)
+    <div class="at-dash-body">
+      <!-- ════════════════ TAB 1 — VIỆC CỦA TÔI ════════════════ -->
+      <div v-show="activeTab === 'me'" class="dh-tabpanel">
+        <!-- Greeting -->
+        <div class="at-greet">
+          <div>
+            <div class="at-greet__h"><Sun :size="16" :stroke-width="2" /> Chào {{ greetingHour }}, {{ firstName(viewedName) }}!</div>
+            <div class="at-greet__s">
+              Hôm nay có <b>{{ totalUnreplied }} tin chưa rep</b>, <b>{{ totalAppts }} lịch hẹn</b>
+              <template v-if="me?.sessions"> và <b>{{ me.sessions.active }} phiên đang theo dõi</b></template>.
+            </div>
+          </div>
+          <div class="at-greet__r">
+            <!-- Scope picker (view-as) — chỉ trưởng phòng/admin -->
+            <div v-if="canPickUser" class="dh-scope" style="position:relative">
+              <button class="at-roletabs__scope" @click.stop="userPickerOpen = !userPickerOpen">
+                <User :size="14" :stroke-width="2" /> {{ currentViewedUserName }} <ChevronDown :size="14" :stroke-width="2" />
+              </button>
+              <div v-if="userPickerOpen" class="dh-pdd" @click.stop>
+                <div class="dh-pdd-search">
+                  <Search :size="14" :stroke-width="2" />
+                  <input v-model="userPickerSearch" placeholder="Tìm nhân viên" />
                 </div>
-                <template v-if="filteredPickerUsers.length > 0">
-                  <div class="dh-pdd-group">CẤP DƯỚI ({{ filteredPickerUsers.length }})</div>
+                <div class="dh-pdd-group">CỦA TÔI</div>
+                <div class="dh-pdd-item" :class="{ active: !hub.viewAsUserId.value }" @click="selectUser(null)">
+                  {{ auth.user?.fullName }}
+                </div>
+                <template v-if="filteredPickerUsers.length">
+                  <div class="dh-pdd-group">CẤP DƯỚI</div>
                   <div
                     v-for="u in filteredPickerUsers"
                     :key="u.id"
@@ -72,373 +73,364 @@
                     :class="{ active: hub.viewAsUserId.value === u.id }"
                     @click="selectUser(u.id)"
                   >
-                    👤 {{ u.fullName }}
-                    <span class="dh-pdd-meta">{{ u.departmentName ?? '' }}</span>
+                    {{ u.fullName }}<span class="dh-pdd-dept">{{ u.departmentName }}</span>
                   </div>
                 </template>
               </div>
-            </span>
-          </div>
-          <div class="dh-strip-sub" v-if="hub.me.value">
-            <span v-if="hub.me.value.isViewingSelf">
-              Chào sáng <strong>{{ firstName(auth.user?.fullName) }}</strong> — bạn có
-              <strong class="dh-danger">{{ totalUrgent }}</strong> việc cần làm
-            </span>
-            <span v-else>
-              Đang xem dashboard của <strong>{{ currentViewedUserName }}</strong> (view-as cấp dưới)
-            </span>
-          </div>
-        </div>
-        <div class="dh-strip-actions">
-          <button class="dh-btn primary" @click="goToInbox">💬 Vào Tin nhắn</button>
-        </div>
-      </div>
-
-      <!-- KPI 5 cards (split khi có nick riêng tư) -->
-      <div class="dh-kpis" v-if="hub.me.value">
-        <KpiCard
-          label="📥 Chưa rep"
-          :split="hub.me.value.kpi.unreplied"
-          :danger="totalUnreplied > 5"
-          :warn="totalUnreplied > 0"
-          @click="goToInbox"
-        />
-        <KpiCard
-          label="📅 Hẹn hôm nay"
-          :split="hub.me.value.kpi.todayAppointments"
-          :warn="totalAppts > 0"
-          @click="goToAppts"
-        />
-        <KpiCard
-          label="🎯 KH của tôi"
-          :value="hub.me.value.kpi.totalContacts"
-          @click="goToContacts"
-        />
-        <KpiCard
-          label="💤 KH đình trệ"
-          :split="hub.me.value.kpi.dormantContacts"
-          :warn="totalDormant > 0"
-        />
-        <KpiCard
-          label="✅ Chốt tháng"
-          :value="hub.me.value.kpi.closedThisMonth"
-        />
-      </div>
-
-      <!-- Grid 2-col -->
-      <div class="dh-grid2" v-if="hub.me.value">
-        <div class="dh-col">
-          <!-- Urgent list -->
-          <div class="dh-card">
-            <div class="dh-card-head">
-              <div class="dh-card-title">🔥 Cần rep gấp <span class="dh-badge danger">{{ hub.me.value.urgent.length }}</span></div>
-              <a class="dh-link" @click="goToInbox">Inbox cá nhân →</a>
             </div>
-            <div class="dh-card-body" v-if="hub.me.value.urgent.length > 0">
-              <div
-                v-for="u in hub.me.value.urgent"
-                :key="u.conversationId"
-                class="dh-item"
-                @click="goToConv(u.conversationId)"
-              >
-                <div class="dh-item-av">{{ initials(u.contactName) }}</div>
-                <div class="dh-item-body">
-                  <div class="dh-item-name">{{ u.contactName }}</div>
-                  <div class="dh-item-meta">{{ u.unreadCount }} tin · {{ u.nickName }}</div>
-                </div>
-                <div class="dh-item-time">{{ ago(u.lastMessageAt) }}</div>
+            <button class="at-btn at-btn--secondary at-btn--sm" @click="goToLeadPool">
+              <Gift :size="14" :stroke-width="2" /> Nhận khách
+            </button>
+            <button class="at-btn at-btn--primary at-btn--sm" @click="goToInbox">
+              <MessageCircle :size="14" :stroke-width="2" /> Vào Tin nhắn
+            </button>
+          </div>
+        </div>
+
+        <!-- 6 KPI -->
+        <div class="at-kpi-grid">
+          <div class="at-kpi-tile at-kpi--clickable at-kpi--danger" @click="goToInbox">
+            <div class="at-kpi-label"><Inbox :size="13" :stroke-width="2" /> Chưa rep</div>
+            <div class="at-kpi-value"><PrivVal :split="me?.kpi.unreplied" /></div>
+            <div class="at-kpi-sub">Cần trả lời ngay</div>
+          </div>
+          <div class="at-kpi-tile at-kpi--clickable at-kpi--warn" @click="goToAppts">
+            <div class="at-kpi-label"><CalendarClock :size="13" :stroke-width="2" /> Hẹn hôm nay</div>
+            <div class="at-kpi-value"><PrivVal :split="me?.kpi.todayAppointments" /></div>
+            <div class="at-kpi-sub">Lịch hẹn của bạn</div>
+          </div>
+          <div class="at-kpi-tile at-kpi--clickable at-kpi--info">
+            <div class="at-kpi-label"><Eye :size="13" :stroke-width="2" /> Đang theo dõi</div>
+            <div class="at-kpi-value">{{ me?.sessions?.active ?? 0 }}</div>
+            <div class="at-kpi-sub">{{ me?.sessions?.replied ?? 0 }} KH vừa rep</div>
+          </div>
+          <div class="at-kpi-tile at-kpi--clickable" @click="goToContacts">
+            <div class="at-kpi-label"><Target :size="13" :stroke-width="2" /> KH của tôi</div>
+            <div class="at-kpi-value">{{ me?.kpi.totalContacts ?? 0 }}</div>
+            <div class="at-kpi-sub">{{ me?.interactionToday?.newLeads ?? 0 }} mới hôm nay</div>
+          </div>
+          <div class="at-kpi-tile at-kpi--clickable at-kpi--warn">
+            <div class="at-kpi-label"><Moon :size="13" :stroke-width="2" /> KH đình trệ</div>
+            <div class="at-kpi-value"><PrivVal :split="me?.kpi.dormantContacts" /></div>
+            <div class="at-kpi-sub">&gt;7 ngày không nhắn</div>
+          </div>
+          <div class="at-kpi-tile at-kpi--clickable at-kpi--good">
+            <div class="at-kpi-label"><CircleCheck :size="13" :stroke-width="2" /> Chốt tháng</div>
+            <div class="at-kpi-value">{{ me?.kpi.closedThisMonth ?? 0 }}</div>
+            <div class="at-kpi-sub">Khách đã chốt</div>
+          </div>
+        </div>
+
+        <div class="at-dash-grid-2">
+          <!-- LEFT -->
+          <div class="at-dash-col">
+            <!-- Cần rep gấp -->
+            <div class="at-card">
+              <div class="at-card__head">
+                <div class="at-card__title"><Flame :size="14" :stroke-width="2" /> Cần rep gấp</div>
+                <span v-if="me?.urgent.length" class="at-card__badge at-card__badge--d">{{ me.urgent.length }}</span>
               </div>
-            </div>
-            <div v-else class="dh-empty">🎉 Không có tin nào chưa rep</div>
-          </div>
-
-          <!-- Today appointments -->
-          <div class="dh-card">
-            <div class="dh-card-head">
-              <div class="dh-card-title">📅 Lịch hẹn hôm nay <span class="dh-badge warn">{{ hub.me.value.appointments.length }}</span></div>
-              <a class="dh-link" @click="goToAppts">Xem tuần →</a>
-            </div>
-            <div class="dh-card-body" v-if="hub.me.value.appointments.length > 0">
-              <div
-                v-for="a in hub.me.value.appointments"
-                :key="a.id"
-                class="dh-item"
-              >
-                <div class="dh-item-av appt">{{ apptTime(a.appointmentDate) }}</div>
-                <div class="dh-item-body">
-                  <div class="dh-item-name">{{ a.title ?? `Gặp ${a.contactName ?? 'KH'}` }}</div>
-                  <div class="dh-item-meta">{{ a.location ?? 'Chưa có địa điểm' }}</div>
-                </div>
-                <div class="dh-item-time">{{ a.appointmentTime ?? apptTime(a.appointmentDate) }}</div>
-              </div>
-            </div>
-            <div v-else class="dh-empty">Không có hẹn hôm nay</div>
-          </div>
-        </div>
-
-        <!-- Right col -->
-        <div class="dh-col-right">
-          <!-- Quota nick -->
-          <div class="dh-card">
-            <div class="dh-card-head">
-              <div class="dh-card-title">🔋 Quota nick hôm nay</div>
-            </div>
-            <div class="dh-card-body">
-              <div
-                v-for="n in hub.me.value.quotaNicks"
-                :key="n.id"
-                class="dh-quota-row"
-              >
-                <div class="dh-quota-name" :class="{ locked: n.isPrivate }">
-                  {{ n.displayName }}
-                </div>
-                <div class="dh-quota-bar">
-                  <div
-                    class="dh-quota-fill"
-                    :class="{ locked: n.isPrivate, warn: pct(n.messagesToday, 300) > 70, danger: pct(n.messagesToday, 300) > 90 }"
-                    :style="{ width: n.isPrivate ? '100%' : pct(n.messagesToday, 300) + '%' }"
-                  ></div>
-                </div>
-                <div class="dh-quota-val">
-                  <span v-if="n.isPrivate">—</span>
-                  <span v-else>{{ n.messagesToday }}/300</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="hub.loadingMe.value" class="dh-loading">Đang tải…</div>
-    </section>
-
-    <!-- ━━━━━━━━━━ SECTION 2 — QUẢN LÝ TEAM ━━━━━━━━━━ -->
-    <section
-      id="dh-sec-team"
-      class="dh-section"
-      v-if="hub.hasTeamSection.value && hub.team.value"
-    >
-      <div class="dh-strip team">
-        <div class="dh-strip-icon team">👥</div>
-        <div class="dh-strip-text">
-          <div class="dh-strip-title">
-            Quản lý team
-            <span
-              class="dh-scope team"
-              @click="deptPickerOpen = !deptPickerOpen"
-            >
-              👥 {{ deptPickerLabel }}
-              <span class="dh-caret">▾</span>
-
-              <div v-if="deptPickerOpen" class="dh-picker-dd" @click.stop>
-                <input
-                  v-model="deptPickerSearch"
-                  class="dh-pdd-search"
-                  placeholder="🔍 Lọc PKD..."
-                  @click.stop
-                >
-                <div class="dh-pdd-group">CHỌN PKD ({{ multiDept ? 'MULTI' : 'SINGLE' }})</div>
+              <div class="at-card__body">
                 <div
-                  v-for="d in filteredPickerDepts"
-                  :key="d.id"
-                  class="dh-pdd-item"
-                  :class="{ active: tempSelectedDepts.includes(d.id) }"
-                  @click="toggleDept(d.id)"
+                  v-for="u in me?.urgent ?? []"
+                  :key="u.conversationId"
+                  class="at-list-row"
+                  @click="goToConv(u.conversationId)"
                 >
-                  <div class="dh-pdd-check" :class="{ on: tempSelectedDepts.includes(d.id) }">
-                    {{ tempSelectedDepts.includes(d.id) ? '✓' : '' }}
+                  <span class="at-list-row__av at-list-row__av--b">{{ initials(u.contactName) }}</span>
+                  <div>
+                    <div class="at-list-row__nm">{{ u.contactName }}</div>
+                    <div class="at-list-row__mt">Nick: {{ u.nickName }} · {{ ago(u.lastMessageAt) }}</div>
                   </div>
-                  {{ d.name }} ({{ d.memberCount }} NV)
+                  <span class="at-rowpill at-rowpill--unread">{{ u.unreadCount }}</span>
                 </div>
-                <div class="dh-pdd-actions">
-                  <button class="dh-btn" @click="cancelDeptPicker">Huỷ</button>
-                  <button class="dh-btn primary" @click="applyDeptPicker">Áp dụng</button>
+                <div v-if="!me?.urgent.length" class="at-empty"><div class="at-empty__title">Không có tin nào chưa rep</div></div>
+              </div>
+            </div>
+
+            <!-- Phiên theo dõi -->
+            <div class="at-card">
+              <div class="at-card__head">
+                <div class="at-card__title"><Eye :size="14" :stroke-width="2" /> Phiên theo dõi</div>
+                <span class="at-card__link" @click="goToCareSessions">Xem tất cả</span>
+              </div>
+              <div class="at-ministats">
+                <div class="at-ministat"><div class="at-ministat__v">{{ me?.sessions?.active ?? 0 }}</div><div class="at-ministat__l">Đang theo dõi</div></div>
+                <div class="at-ministat at-ministat--good"><div class="at-ministat__v">{{ me?.sessions?.replied ?? 0 }}</div><div class="at-ministat__l">KH vừa rep</div></div>
+                <div class="at-ministat at-ministat--warn"><div class="at-ministat__v">{{ me?.sessions?.paused ?? 0 }}</div><div class="at-ministat__l">Tạm dừng</div></div>
+                <div class="at-ministat"><div class="at-ministat__v">{{ me?.sessions?.closedThisMonth ?? 0 }}</div><div class="at-ministat__l">Chốt tháng</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT -->
+          <div class="at-dash-col">
+            <!-- Nhắc nhở -->
+            <div class="at-card">
+              <div class="at-card__head">
+                <div class="at-card__title"><Bell :size="14" :stroke-width="2" /> Nhắc nhở</div>
+                <span v-if="reminderCount > 0" class="at-card__badge at-card__badge--w">{{ reminderCount }}</span>
+              </div>
+              <div class="at-card__body">
+                <div v-for="a in me?.reminders?.overdue ?? []" :key="'ov'+a.id" class="at-list-row" @click="goToAppts">
+                  <span class="at-list-row__av at-list-row__av--r"><TriangleAlert :size="15" :stroke-width="2" /></span>
+                  <div>
+                    <div class="at-list-row__nm" style="color:var(--at-atlas-danger)">Hẹn QUÁ HẠN — {{ a.contactName || a.title }}</div>
+                    <div class="at-list-row__mt">{{ apptHM(a.appointmentDate, a.appointmentTime) }} · {{ a.location || 'Không rõ địa điểm' }}</div>
+                  </div>
+                  <span class="at-list-row__rt"><TriangleAlert :size="13" :stroke-width="2" /></span>
+                </div>
+                <div v-for="a in me?.reminders?.today ?? []" :key="'td'+a.id" class="at-list-row" @click="goToAppts">
+                  <span class="at-list-row__av at-list-row__av--o"><CalendarClock :size="15" :stroke-width="2" /></span>
+                  <div>
+                    <div class="at-list-row__nm">Hẹn hôm nay — {{ a.contactName || a.title }}</div>
+                    <div class="at-list-row__mt">{{ apptHM(a.appointmentDate, a.appointmentTime) }} · {{ a.location || 'Không rõ' }}</div>
+                  </div>
+                  <span class="at-list-row__rt">Hôm nay</span>
+                </div>
+                <div v-for="a in me?.reminders?.tomorrow ?? []" :key="'tm'+a.id" class="at-list-row" @click="goToAppts">
+                  <span class="at-list-row__av at-list-row__av--o"><CalendarClock :size="15" :stroke-width="2" /></span>
+                  <div>
+                    <div class="at-list-row__nm">Hẹn ngày mai — {{ a.contactName || a.title }}</div>
+                    <div class="at-list-row__mt">{{ apptHM(a.appointmentDate, a.appointmentTime) }} · {{ a.location || 'Không rõ' }}</div>
+                  </div>
+                  <span class="at-list-row__rt">Mai</span>
+                </div>
+                <div v-for="b in me?.reminders?.birthdays ?? []" :key="'bd'+b.id" class="at-list-row" @click="goToContacts">
+                  <span class="at-list-row__av at-list-row__av--p"><Cake :size="15" :stroke-width="2" /></span>
+                  <div>
+                    <div class="at-list-row__nm">Sinh nhật — {{ b.contactName }}</div>
+                    <div class="at-list-row__mt">Hôm nay · gửi lời chúc</div>
+                  </div>
+                  <span class="at-list-row__rt"><Gift :size="13" :stroke-width="2" /></span>
+                </div>
+                <div v-if="reminderCount === 0" class="at-empty"><div class="at-empty__title">Không có nhắc nhở</div></div>
+              </div>
+            </div>
+
+            <!-- Quota nick -->
+            <div class="at-card">
+              <div class="at-card__head"><div class="at-card__title"><Zap :size="14" :stroke-width="2" /> Quota nick hôm nay</div></div>
+              <div class="at-quota">
+                <div v-for="n in me?.quotaNicks ?? []" :key="n.id" class="at-quota__line">
+                  <div class="at-quota__top">
+                    <span class="at-quota__nm" :style="n.isPrivate ? 'color:var(--at-atlas-warning)' : ''">
+                      <Lock v-if="n.isPrivate" :size="12" :stroke-width="2" />{{ n.displayName }}
+                    </span>
+                    <span class="at-quota__vl">{{ n.isPrivate ? '—' : (n.messagesToday + '/300') }}</span>
+                  </div>
+                  <div class="at-bar">
+                    <div v-if="!n.isPrivate" class="at-bar__seg" :style="quotaSeg(n.messagesToday)"></div>
+                    <div v-else class="at-bar__seg" style="width:100%;background:repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 4px,#f1f5f9 4px,#f1f5f9 8px)"></div>
+                  </div>
+                </div>
+                <div v-if="!me?.quotaNicks.length" class="at-empty"><div class="at-empty__title">Chưa có nick</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hàng KH: điểm số + trạng thái/tag + tương tác -->
+        <div class="at-dash-grid-3" style="margin-top:12px">
+          <!-- Điểm số -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><ChartColumn :size="14" :stroke-width="2" /> Điểm số khách hàng</div></div>
+            <div class="at-scoredist">
+              <div class="at-scoreline">
+                <div class="at-scoreline__top"><span class="at-scoreline__nm" style="color:var(--lead-c)"><Target :size="13" :stroke-width="2" /> Lead (ý định)</span><span class="at-scoreline__vl">TB {{ me?.scores?.leadAvg ?? 0 }}</span></div>
+                <div class="at-bar"><div class="at-bar__seg" :style="bandSeg(me?.scores?.leadMid, me?.scores?.leadHi, '#fde68a','#f59e0b')"></div></div>
+              </div>
+              <div class="at-scoreline">
+                <div class="at-scoreline__top"><span class="at-scoreline__nm" style="color:var(--eng-c)"><MessageCircle :size="13" :stroke-width="2" /> Tương tác (28 ngày)</span><span class="at-scoreline__vl">TB {{ me?.scores?.engagementAvg ?? 0 }}</span></div>
+                <div class="at-bar"><div class="at-bar__seg" :style="bandSeg(me?.scores?.engMid, me?.scores?.engHi, '#bfdbfe','#3b82f6')"></div></div>
+              </div>
+              <div class="at-scoreline">
+                <div class="at-scoreline__top"><span class="at-scoreline__nm" style="color:var(--prio-c)"><Star :size="13" :stroke-width="2" /> Ưu tiên (tổng hợp)</span><span class="at-scoreline__vl">{{ me?.scores?.priorityHigh ?? 0 }} KH cao</span></div>
+                <div class="at-bar"><div class="at-bar__seg" :style="`width:${priorityBarPct}%;background:#ef4444`"></div></div>
+              </div>
+              <div v-if="(me?.scores?.priorityHigh ?? 0) > 0" class="at-scorehint">
+                {{ me?.scores?.priorityHigh }} KH ưu tiên cao đang chờ chốt — <span class="lnk" @click="goToContacts">xem danh sách</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Trạng thái + tag -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><Tag :size="14" :stroke-width="2" /> Trạng thái khách hàng</div></div>
+            <div class="at-chipwrap">
+              <span v-for="s in statusChips" :key="s.status" class="at-statchip" :class="s.cls">
+                {{ s.label }} <span class="at-statchip__c">{{ s.count }}</span>
+              </span>
+              <span v-if="!statusChips.length" class="at-statchip">Chưa có dữ liệu</span>
+            </div>
+            <div class="at-card__head" style="border-top:1px solid var(--at-hairline)"><div class="at-card__title" style="font-size:12px"><Bookmark :size="13" :stroke-width="2" /> Tag phổ biến</div></div>
+            <div class="at-chipwrap">
+              <span v-for="t in me?.topTags ?? []" :key="t.tag" class="at-statchip">{{ t.tag }} <span class="at-statchip__c">{{ t.count }}</span></span>
+              <span v-if="!me?.topTags?.length" class="at-statchip">Chưa gắn tag</span>
+            </div>
+          </div>
+
+          <!-- Tương tác -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><TrendingUp :size="14" :stroke-width="2" /> Tương tác hôm nay</div></div>
+            <div class="at-ministats">
+              <div class="at-ministat"><div class="at-ministat__v">{{ me?.interactionToday?.sent ?? 0 }}</div><div class="at-ministat__l">Tin đã gửi</div></div>
+              <div class="at-ministat at-ministat--good"><div class="at-ministat__v">{{ me?.interactionToday?.replied ?? 0 }}</div><div class="at-ministat__l">KH phản hồi</div></div>
+              <div class="at-ministat"><div class="at-ministat__v">{{ me?.interactionToday?.replyRate ?? 0 }}%</div><div class="at-ministat__l">Tỷ lệ rep</div></div>
+            </div>
+            <div class="at-ministats">
+              <div class="at-ministat"><div class="at-ministat__v">{{ me?.interactionToday?.newFriends ?? 0 }}</div><div class="at-ministat__l">Bạn mới</div></div>
+              <div class="at-ministat"><div class="at-ministat__v">{{ me?.interactionToday?.newLeads ?? 0 }}</div><div class="at-ministat__l">Lead mới</div></div>
+              <div class="at-ministat"><div class="at-ministat__v">{{ me?.kpi.closedThisMonth ?? 0 }}</div><div class="at-ministat__l">Chốt tháng</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════ TAB 2 — QUẢN LÝ TEAM ════════════════ -->
+      <div v-show="activeTab === 'team'" class="dh-tabpanel">
+        <div class="at-banner-priv">
+          <Lock :size="14" :stroke-width="2" />
+          Privacy v2: số liệu hiển thị dạng công khai +<Lock :size="11" :stroke-width="2" />riêng tư. Trưởng phòng xem KPI/điểm số nhưng KHÔNG xem nội dung tin nhắn nick riêng tư.
+        </div>
+
+        <div class="at-kpi-grid">
+          <div class="at-kpi-tile at-kpi--danger"><div class="at-kpi-label"><Inbox :size="13" :stroke-width="2" /> Tồn đọng team</div><div class="at-kpi-value"><PrivVal :split="team?.teamKpi.unreplied" /></div><div class="at-kpi-sub">cả PKD chưa rep</div></div>
+          <div class="at-kpi-tile at-kpi--warn"><div class="at-kpi-label"><CalendarClock :size="13" :stroke-width="2" /> Hẹn team</div><div class="at-kpi-value"><PrivVal :split="team?.teamKpi.todayAppointments" /></div><div class="at-kpi-sub">hôm nay</div></div>
+          <div class="at-kpi-tile at-kpi--info"><div class="at-kpi-label"><Eye :size="13" :stroke-width="2" /> Phiên theo dõi</div><div class="at-kpi-value">{{ team?.followSessions?.active ?? 0 }}</div><div class="at-kpi-sub">{{ team?.followSessions?.replied ?? 0 }} KH vừa rep</div></div>
+          <div class="at-kpi-tile"><div class="at-kpi-label"><Target :size="13" :stroke-width="2" /> Tổng KH</div><div class="at-kpi-value">{{ team?.teamKpi.totalContacts ?? 0 }}</div><div class="at-kpi-sub">cả team</div></div>
+          <div class="at-kpi-tile at-kpi--good"><div class="at-kpi-label"><CircleCheck :size="13" :stroke-width="2" /> Chốt tuần</div><div class="at-kpi-value">{{ team?.teamKpi.closedThisWeek ?? 0 }}</div><div class="at-kpi-sub">cả team</div></div>
+          <div class="at-kpi-tile at-kpi--purple"><div class="at-kpi-label"><Star :size="13" :stroke-width="2" /> Top: {{ firstName(team?.topUser?.fullName) }}</div><div class="at-kpi-value">{{ team?.topUser?.closedThisWeek ?? 0 }}</div><div class="at-kpi-sub">chốt nhiều nhất</div></div>
+        </div>
+
+        <!-- Team table -->
+        <div class="at-card" style="margin-bottom:12px">
+          <div class="at-card__head"><div class="at-card__title"><Users :size="14" :stroke-width="2" /> Đội ngũ ({{ team?.perUser.length ?? 0 }} nhân viên)</div></div>
+          <table class="at-table">
+            <thead><tr><th>Nhân viên</th><th class="num">Chưa rep</th><th class="num">Hẹn</th><th class="num">KH</th><th class="num">Chốt tuần</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="u in team?.perUser ?? []" :key="u.userId">
+                <td>
+                  <div class="at-tname">
+                    <span class="at-tname__av" :style="avBg(u.userId)">{{ initials(u.fullName) }}</span>
+                    {{ firstName(u.fullName) }}
+                    <span v-if="u.userId === team?.topUser?.userId" class="at-name-tag"><Star :size="9" :stroke-width="2.5" /> Top</span>
+                    <span v-if="u.hasPrivateNick" class="at-name-lock"><Lock :size="10" :stroke-width="2" />{{ u.privateNickCount }}</span>
+                  </div>
+                </td>
+                <td class="num"><PrivVal :split="u.unreplied" /></td>
+                <td class="num"><PrivVal :split="u.todayAppointments" /></td>
+                <td class="num">{{ u.totalContacts }}</td>
+                <td class="num" :style="u.closedThisWeek > 0 ? 'color:var(--at-atlas-success)' : ''">{{ u.closedThisWeek }}</td>
+                <td><span class="at-miniact" @click="selectUser(u.userId); activeTab = 'me'">Xem <ChevronDown :size="12" :stroke-width="2" style="transform:rotate(-90deg)" /></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="at-dash-grid-3">
+          <!-- Lead pool -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><Gift :size="14" :stroke-width="2" /> Nhận khách (Lead Pool)</div></div>
+            <div class="at-ministats">
+              <div class="at-ministat at-ministat--warn"><div class="at-ministat__v">{{ team?.leadPool?.pending ?? 0 }}</div><div class="at-ministat__l">Lead đang chờ</div></div>
+              <div class="at-ministat at-ministat--good"><div class="at-ministat__v">{{ team?.leadPool?.claimedToday ?? 0 }}</div><div class="at-ministat__l">Nhận hôm nay</div></div>
+              <div class="at-ministat at-ministat--danger"><div class="at-ministat__v">{{ team?.leadPool?.forgotten ?? 0 }}</div><div class="at-ministat__l">KH bỏ quên</div></div>
+            </div>
+          </div>
+
+          <!-- Hiệu suất phản hồi -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><TrendingUp :size="14" :stroke-width="2" /> Hiệu suất phản hồi</div></div>
+            <div class="at-scoredist">
+              <div class="at-scoreline">
+                <div class="at-scoreline__top"><span class="at-scoreline__nm">Tỷ lệ rep team hôm nay</span><span class="at-scoreline__vl">{{ team?.responsePerf?.replyRate ?? 0 }}%</span></div>
+                <div class="at-bar"><div class="at-bar__seg" :style="`width:${team?.responsePerf?.replyRate ?? 0}%;background:var(--at-atlas-success)`"></div></div>
+              </div>
+              <div class="at-scoreline">
+                <div class="at-scoreline__top"><span class="at-scoreline__nm">KH phản hồi / Tin gửi</span><span class="at-scoreline__vl">{{ team?.responsePerf?.replied ?? 0 }} / {{ team?.responsePerf?.sent ?? 0 }}</span></div>
+                <div class="at-bar"><div class="at-bar__seg" :style="`width:${team?.responsePerf?.replyRate ?? 0}%;background:var(--at-action)`"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Marketing đang chạy (reuse: link sang module) -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><Megaphone :size="14" :stroke-width="2" /> Marketing</div><span class="at-card__link" @click="goToMarketing">Xem</span></div>
+            <div class="at-card__body">
+              <div class="at-list-row" @click="goToMarketing">
+                <span class="at-list-row__av at-list-row__av--p"><Target :size="15" :stroke-width="2" /></span>
+                <div><div class="at-list-row__nm">Mục tiêu &amp; Luồng kịch bản</div><div class="at-list-row__mt">Quản lý chiến dịch đang chạy</div></div>
+                <span class="at-list-row__rt"><ChevronDown :size="13" :stroke-width="2" style="transform:rotate(-90deg)" /></span>
+              </div>
+              <div class="at-list-row" @click="goToMarketing">
+                <span class="at-list-row__av at-list-row__av--b"><Send :size="15" :stroke-width="2" /></span>
+                <div><div class="at-list-row__nm">Broadcast</div><div class="at-list-row__mt">Gửi hàng loạt theo tệp KH</div></div>
+                <span class="at-list-row__rt"><ChevronDown :size="13" :stroke-width="2" style="transform:rotate(-90deg)" /></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════ TAB 3 — QUẢN LÝ HỆ THỐNG ════════════════ -->
+      <div v-show="activeTab === 'system'" class="dh-tabpanel">
+        <div v-if="system?.recentAudit?.length" class="at-banner-audit">
+          <ClipboardList :size="14" :stroke-width="2" />
+          Audit gần nhất: <b>{{ system.recentAudit[0].actorName }}</b> — {{ system.recentAudit[0].action }} · {{ ago(system.recentAudit[0].createdAt) }}
+          <span class="at-banner-audit__link">Xem nhật ký</span>
+        </div>
+
+        <div class="at-kpi-grid">
+          <div class="at-kpi-tile at-kpi--good"><div class="at-kpi-label"><Sparkles :size="13" :stroke-width="2" /> Lead mới tháng</div><div class="at-kpi-value">{{ system?.orgKpi.newLeadsThisMonth ?? 0 }}</div><div class="at-kpi-sub">toàn tổ chức</div></div>
+          <div class="at-kpi-tile"><div class="at-kpi-label"><ClipboardList :size="13" :stroke-width="2" /> Tổng KH</div><div class="at-kpi-value">{{ (system?.orgKpi.totalContacts ?? 0).toLocaleString('vi-VN') }}</div><div class="at-kpi-sub">toàn tổ chức</div></div>
+          <div class="at-kpi-tile at-kpi--good"><div class="at-kpi-label"><Circle :size="13" :stroke-width="2" fill="currentColor" /> Nick khoẻ</div><div class="at-kpi-value">{{ system?.orgKpi.nickHealth.healthy ?? 0 }}</div><div class="at-kpi-sub">/ {{ system?.orgKpi.totalNicks ?? 0 }} nick</div></div>
+          <div class="at-kpi-tile at-kpi--danger"><div class="at-kpi-label"><Circle :size="13" :stroke-width="2" fill="currentColor" /> Nick lỗi</div><div class="at-kpi-value">{{ (system?.orgKpi.nickHealth.banned ?? 0) + (system?.orgKpi.nickHealth.offline ?? 0) }}</div><div class="at-kpi-sub">cần đăng nhập lại</div></div>
+          <div class="at-kpi-tile at-kpi--warn"><div class="at-kpi-label"><Lock :size="13" :stroke-width="2" /> Nick riêng tư</div><div class="at-kpi-value">{{ system?.orgKpi.nickHealth.private ?? 0 }}</div><div class="at-kpi-sub">admin xem sức khoẻ</div></div>
+          <div class="at-kpi-tile at-kpi--purple"><div class="at-kpi-label"><Eye :size="13" :stroke-width="2" /> Phiên theo dõi</div><div class="at-kpi-value">{{ system?.orgKpi.followSessions ?? 0 }}</div><div class="at-kpi-sub">toàn hệ thống</div></div>
+        </div>
+
+        <div class="at-dash-grid-2">
+          <!-- Dept ranking -->
+          <div class="at-card">
+            <div class="at-card__head"><div class="at-card__title"><Trophy :size="14" :stroke-width="2" /> Hiệu suất PKD (tháng này)</div></div>
+            <table class="at-table">
+              <thead><tr><th>Phòng KD</th><th class="num">NV</th><th class="num">Lead mới</th><th class="num">Chốt</th></tr></thead>
+              <tbody>
+                <tr v-for="d in system?.deptRanking ?? []" :key="d.departmentId">
+                  <td><div class="at-tname"><span class="at-tname__av" :style="avBg(d.departmentId)">{{ initials(d.departmentName) }}</span> {{ d.departmentName }}</div></td>
+                  <td class="num">{{ d.memberCount }}</td>
+                  <td class="num">{{ d.newLeadsThisMonth }}</td>
+                  <td class="num" style="color:var(--at-atlas-success)">{{ d.closedThisMonth }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Sức khoẻ + phễu -->
+          <div class="at-dash-col">
+            <div class="at-card">
+              <div class="at-card__head"><div class="at-card__title"><Activity :size="14" :stroke-width="2" /> Sức khoẻ nick ({{ system?.orgKpi.totalNicks ?? 0 }} nick)</div></div>
+              <div class="at-ministats">
+                <div class="at-ministat at-ministat--good"><div class="at-ministat__v">{{ system?.orgKpi.nickHealth.healthy ?? 0 }}</div><div class="at-ministat__l">Khoẻ</div></div>
+                <div class="at-ministat at-ministat--warn"><div class="at-ministat__v">{{ system?.orgKpi.nickHealth.offline ?? 0 }}</div><div class="at-ministat__l">Nghỉ</div></div>
+                <div class="at-ministat at-ministat--danger"><div class="at-ministat__v">{{ system?.orgKpi.nickHealth.banned ?? 0 }}</div><div class="at-ministat__l">Lỗi</div></div>
+                <div class="at-ministat"><div class="at-ministat__v">{{ system?.orgKpi.nickHealth.private ?? 0 }}</div><div class="at-ministat__l">Riêng tư</div></div>
+              </div>
+            </div>
+            <div class="at-card">
+              <div class="at-card__head"><div class="at-card__title"><ChartColumn :size="14" :stroke-width="2" /> Phễu khách hàng toàn tổ chức</div></div>
+              <div class="at-scoredist">
+                <div v-for="f in funnelBars" :key="f.status" class="at-scoreline">
+                  <div class="at-scoreline__top"><span class="at-scoreline__nm">{{ f.label }}</span><span class="at-scoreline__vl">{{ f.count.toLocaleString('vi-VN') }}</span></div>
+                  <div class="at-bar"><div class="at-bar__seg" :style="`width:${f.pct}%;background:${f.color}`"></div></div>
                 </div>
               </div>
-            </span>
-          </div>
-          <div class="dh-strip-sub">
-            Tổng cộng <strong class="dh-danger">{{ hub.team.value.teamKpi.unreplied.public + hub.team.value.teamKpi.unreplied.private }} việc tồn đọng</strong>
-            · <strong class="dh-success">{{ hub.team.value.teamKpi.closedThisWeek }} chốt tuần</strong>
-            · Click NV để xem dashboard cá nhân
+            </div>
           </div>
         </div>
       </div>
-
-      <!-- Privacy banner -->
-      <div class="dh-priv-banner">
-        <span class="dh-priv-ico">🔒</span>
-        <div>
-          <strong>Privacy v2:</strong> Cột "Chưa rep / Hẹn" hiển thị <strong>{{ '{public}' }} +🔒{{ '{private}' }}</strong>.
-          Nick riêng tư là cam kết với NV — không có cơ chế emergency unlock.
-        </div>
-      </div>
-
-      <!-- KPI team -->
-      <div class="dh-kpis">
-        <KpiCard
-          label="📥 Tồn đọng team"
-          :split="hub.team.value.teamKpi.unreplied"
-          :danger="hub.team.value.teamKpi.unreplied.public > 10"
-        />
-        <KpiCard
-          label="📅 Hẹn team"
-          :split="hub.team.value.teamKpi.todayAppointments"
-        />
-        <KpiCard
-          label="🎯 Tổng KH"
-          :value="hub.team.value.teamKpi.totalContacts"
-        />
-        <KpiCard
-          label="✅ Chốt tuần"
-          :value="hub.team.value.teamKpi.closedThisWeek"
-        />
-        <KpiCard
-          v-if="hub.team.value.topUser"
-          :label="'⭐ Top: ' + (hub.team.value.topUser.fullName || '')"
-          :value="hub.team.value.topUser.closedThisWeek"
-        />
-      </div>
-
-      <!-- Team table -->
-      <div class="dh-card">
-        <div class="dh-card-head">
-          <div class="dh-card-title">👥 Đội ngũ ({{ hub.team.value.perUser.length }} NV)</div>
-        </div>
-        <div class="dh-card-body" style="padding: 0;">
-          <table class="dh-team-tbl">
-            <thead>
-              <tr>
-                <th>Nhân viên</th>
-                <th class="num">Chưa rep</th>
-                <th class="num">Hẹn</th>
-                <th class="num">KH</th>
-                <th class="num">Chốt tuần</th>
-                <th>Hành động</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="u in hub.team.value.perUser" :key="u.userId">
-                <td>
-                  <div class="dh-team-name">
-                    <div class="dh-team-av">{{ initials(u.fullName) }}</div>
-                    {{ u.fullName }}
-                    <span v-if="u.hasPrivateNick" class="dh-tag lock">🔒 {{ u.privateNickCount }} nick</span>
-                    <span v-if="u.deptRole === 'leader'" class="dh-tag">TP</span>
-                  </div>
-                </td>
-                <td class="num">
-                  <span>{{ u.unreplied.public }}</span>
-                  <span v-if="u.unreplied.private > 0" class="dh-locksplit">🔒{{ u.unreplied.private }}</span>
-                </td>
-                <td class="num">
-                  <span>{{ u.todayAppointments.public }}</span>
-                  <span v-if="u.todayAppointments.private > 0" class="dh-locksplit">🔒{{ u.todayAppointments.private }}</span>
-                </td>
-                <td class="num">{{ u.totalContacts }}</td>
-                <td class="num">{{ u.closedThisWeek }}</td>
-                <td>
-                  <button class="dh-btn-mini" @click="selectUser(u.userId)">Xem dashboard →</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ━━━━━━━━━━ SECTION 3 — QUẢN LÝ HỆ THỐNG (ADMIN ONLY) ━━━━━━━━━━ -->
-    <section
-      id="dh-sec-system"
-      class="dh-section"
-      v-if="hub.hasSystemSection.value && hub.system.value"
-    >
-      <div class="dh-strip system">
-        <div class="dh-strip-icon system">🛡️</div>
-        <div class="dh-strip-text">
-          <div class="dh-strip-title">
-            Quản lý hệ thống
-            <span class="dh-scope system locked">🛡️ Toàn tổ chức 🔒</span>
-          </div>
-          <div class="dh-strip-sub">
-            <strong>CHỈ ADMIN</strong> ·
-            {{ hub.system.value.orgKpi.totalNicks }} nick ·
-            {{ hub.system.value.orgKpi.totalContacts.toLocaleString('vi') }} KH ·
-            <strong class="dh-success">{{ hub.system.value.orgKpi.newLeadsThisMonth }} lead mới T5</strong>
-          </div>
-        </div>
-      </div>
-
-      <!-- Audit bar (impersonate actions) -->
-      <div class="dh-audit-bar" v-if="hub.system.value.recentAudit.length > 0">
-        <span class="dh-audit-ico">📋</span>
-        <span>
-          <strong>Audit log gần nhất:</strong>
-          {{ ago(hub.system.value.recentAudit[0].createdAt) }}
-          <strong>{{ hub.system.value.recentAudit[0].actorName }}</strong>
-          {{ hub.system.value.recentAudit[0].action }}
-          · <a class="dh-audit-link">Xem {{ hub.system.value.orgKpi.auditCountToday }} hành động hôm nay →</a>
-        </span>
-      </div>
-
-      <!-- KPI system -->
-      <div class="dh-kpis">
-        <KpiCard
-          label="🆕 Lead mới T5"
-          :value="hub.system.value.orgKpi.newLeadsThisMonth"
-        />
-        <KpiCard
-          label="📋 Tổng KH"
-          :value="hub.system.value.orgKpi.totalContacts"
-        />
-        <KpiCard
-          label="🟢 Nick khoẻ"
-          :value="hub.system.value.orgKpi.nickHealth.healthy"
-        />
-        <KpiCard
-          label="🔴 Nick lỗi"
-          :value="hub.system.value.orgKpi.nickHealth.banned + hub.system.value.orgKpi.nickHealth.offline"
-          :danger="(hub.system.value.orgKpi.nickHealth.banned + hub.system.value.orgKpi.nickHealth.offline) > 0"
-        />
-        <KpiCard
-          label="🔒 Nick riêng tư"
-          :value="hub.system.value.orgKpi.nickHealth.private"
-          :warn="true"
-        />
-      </div>
-
-      <!-- Dept ranking -->
-      <div class="dh-card">
-        <div class="dh-card-head">
-          <div class="dh-card-title">🏆 Hiệu suất PKD (tháng 5)</div>
-        </div>
-        <div class="dh-card-body" style="padding: 0;">
-          <table class="dh-team-tbl">
-            <thead>
-              <tr>
-                <th>PKD</th>
-                <th class="num">NV</th>
-                <th class="num">Lead mới</th>
-                <th class="num">Chốt</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="d in hub.system.value.deptRanking" :key="d.departmentId">
-                <td>
-                  <div class="dh-team-name">
-                    <div class="dh-team-av dept">{{ initials(d.departmentName) }}</div>
-                    {{ d.departmentName }}
-                  </div>
-                </td>
-                <td class="num">{{ d.memberCount }}</td>
-                <td class="num">{{ d.newLeadsThisMonth }}</td>
-                <td class="num"><strong>{{ d.closedThisMonth }}</strong></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    </div>
   </div>
 </template>
 
@@ -448,99 +440,120 @@ import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 import { useDashboardActionHub, type PrivacySplit } from '@/composables/use-dashboard-action-hub';
 import { useAttribution } from '@/composables/use-attribution';
+import {
+  Sun, Target, Users, Shield, User, ChevronDown, Lock, Search,
+  Inbox, CalendarClock, Eye, Moon, CircleCheck, Flame, Bell,
+  TriangleAlert, Cake, Gift, Zap, ChartColumn, MessageCircle, Star,
+  Tag, Bookmark, TrendingUp, Megaphone, Send, ClipboardList,
+  Sparkles, Circle, Activity, Trophy,
+} from 'lucide-vue-next';
+import '@/assets/atlas-v2-dashboard.css';
 
 const attribution = useAttribution();
 const auth = useAuthStore();
 const router = useRouter();
 const hub = useDashboardActionHub();
 
+const me = computed(() => hub.me.value);
+const team = computed(() => hub.team.value);
+const system = computed(() => hub.system.value);
+
+// Tab state — mặc định 'me'. Sale chỉ có me (thanh tab ẩn).
+const activeTab = ref<'me' | 'team' | 'system'>('me');
+
 // Picker state
 const userPickerOpen = ref(false);
 const userPickerSearch = ref('');
-const deptPickerOpen = ref(false);
-const deptPickerSearch = ref('');
 const tempSelectedDepts = ref<string[]>([]);
-const activeSection = ref<'me' | 'team' | 'system'>('me');
-
-const multiDept = computed(() => hub.pickerCanViewAll.value);
 
 const canPickUser = computed(() => hub.hasTeamSection.value || hub.hasSystemSection.value);
-
-const currentViewedUserName = computed(() => {
-  if (!hub.viewAsUserId.value) return `Tôi (${auth.user?.fullName ?? ''})`;
-  const target = hub.pickerUsers.value.find((u) => u.id === hub.viewAsUserId.value);
-  return target?.fullName ?? 'Khác';
+const viewedName = computed(() => {
+  if (!hub.viewAsUserId.value) return auth.user?.fullName ?? '';
+  return hub.pickerUsers.value.find((u) => u.id === hub.viewAsUserId.value)?.fullName ?? '';
 });
-
+const currentViewedUserName = computed(() =>
+  hub.viewAsUserId.value ? viewedName.value : `Tôi (${auth.user?.fullName ?? ''})`,
+);
 const filteredPickerUsers = computed(() => {
   const q = userPickerSearch.value.trim().toLowerCase();
-  return hub.pickerUsers.value
-    .filter((u) => !u.isSelf)
-    .filter((u) => !q || u.fullName.toLowerCase().includes(q));
+  return hub.pickerUsers.value.filter((u) => !u.isSelf).filter((u) => !q || u.fullName.toLowerCase().includes(q));
 });
 
-const filteredPickerDepts = computed(() => {
-  const q = deptPickerSearch.value.trim().toLowerCase();
-  return hub.pickerDepts.value.filter((d) => !q || d.name.toLowerCase().includes(q));
+// ── KPI totals ──
+const totalUnreplied = computed(() => me.value ? me.value.kpi.unreplied.public + me.value.kpi.unreplied.private : 0);
+const totalAppts = computed(() => me.value ? me.value.kpi.todayAppointments.public + me.value.kpi.todayAppointments.private : 0);
+const teamBacklog = computed(() => team.value ? team.value.teamKpi.unreplied.public + team.value.teamKpi.unreplied.private : 0);
+const reminderCount = computed(() => {
+  const r = me.value?.reminders;
+  if (!r) return 0;
+  return r.overdue.length + r.today.length + r.tomorrow.length + r.birthdays.length;
+});
+const priorityBarPct = computed(() => {
+  const hi = me.value?.scores?.priorityHigh ?? 0;
+  const total = me.value?.kpi.totalContacts ?? 0;
+  return total > 0 ? Math.min(100, Math.round((hi / total) * 100)) : 0;
 });
 
-const deptPickerLabel = computed(() => {
-  if (hub.selectedDeptIds.value.length === 0) return `Tất cả (${hub.pickerDepts.value.length} PKD)`;
-  if (hub.selectedDeptIds.value.length === 1) {
-    const d = hub.pickerDepts.value.find((x) => x.id === hub.selectedDeptIds.value[0]);
-    return d?.name ?? '1 PKD';
-  }
-  return `${hub.selectedDeptIds.value.length} PKD`;
+const greetingHour = computed(() => {
+  const h = new Date().getHours();
+  if (h < 11) return 'buổi sáng';
+  if (h < 14) return 'buổi trưa';
+  if (h < 18) return 'buổi chiều';
+  return 'buổi tối';
 });
 
-const totalUrgent = computed(() => {
-  if (!hub.me.value) return 0;
-  return hub.me.value.urgent.length + hub.me.value.appointments.length;
-});
-const totalUnreplied = computed(() => {
-  if (!hub.me.value) return 0;
-  return hub.me.value.kpi.unreplied.public + hub.me.value.kpi.unreplied.private;
-});
-const totalAppts = computed(() => {
-  if (!hub.me.value) return 0;
-  return hub.me.value.kpi.todayAppointments.public + hub.me.value.kpi.todayAppointments.private;
-});
-const totalDormant = computed(() => {
-  if (!hub.me.value) return 0;
-  return hub.me.value.kpi.dormantContacts.public + hub.me.value.kpi.dormantContacts.private;
+// ── Status chips (map status thật → label + màu) ──
+const STATUS_MAP: Record<string, { label: string; cls: string }> = {
+  new: { label: 'Mới', cls: 'at-statchip--blue' },
+  contacted: { label: 'Đã liên hệ', cls: 'at-statchip--blue' },
+  nurturing: { label: 'Đang chăm', cls: 'at-statchip--yellow' },
+  caring: { label: 'Đang chăm', cls: 'at-statchip--yellow' },
+  negotiating: { label: 'Đang tư vấn', cls: 'at-statchip--yellow' },
+  interested: { label: 'Quan tâm', cls: 'at-statchip--green' },
+  closed_won: { label: 'Chốt', cls: 'at-statchip--green' },
+  closed: { label: 'Chốt', cls: 'at-statchip--green' },
+  chot: { label: 'Chốt', cls: 'at-statchip--green' },
+  cold: { label: 'Nguội', cls: 'at-statchip--red' },
+  lost: { label: 'Mất', cls: 'at-statchip--red' },
+  archived: { label: 'Lưu trữ', cls: '' },
+};
+const statusChips = computed(() => {
+  const sb = me.value?.statusBreakdown ?? [];
+  return sb
+    .filter((s) => s.count > 0)
+    .map((s) => ({ status: s.status, count: s.count, ...(STATUS_MAP[s.status] ?? { label: s.status, cls: '' }) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
 });
 
-// ── Picker actions ─────────────────────────────────────────────────────
+// ── Funnel bars (system) ──
+const FUNNEL_ORDER = ['new', 'contacted', 'negotiating', 'nurturing', 'caring', 'interested', 'closed_won', 'closed', 'chot', 'cold'];
+const FUNNEL_COLOR: Record<string, string> = { new: '#bfdbfe', contacted: '#93c5fd', negotiating: '#60a5fa', nurturing: '#fbbf24', caring: '#fbbf24', interested: '#34d399', closed_won: 'var(--at-atlas-success)', closed: 'var(--at-atlas-success)', chot: 'var(--at-atlas-success)', cold: '#94a3b8' };
+const funnelBars = computed(() => {
+  const f = (system.value?.funnel ?? []).filter((x) => x.status && x.count > 0);
+  const max = Math.max(1, ...f.map((x) => x.count));
+  return f
+    .sort((a, b) => FUNNEL_ORDER.indexOf(a.status ?? '') - FUNNEL_ORDER.indexOf(b.status ?? ''))
+    .slice(0, 6)
+    .map((x) => ({ status: x.status ?? 'khac', label: STATUS_MAP[x.status ?? '']?.label ?? x.status ?? 'Khác', count: x.count, pct: Math.round((x.count / max) * 100), color: FUNNEL_COLOR[x.status ?? ''] ?? '#cbd5e1' }));
+});
+
+// ── Picker actions ──
 async function selectUser(userId: string | null) {
   userPickerOpen.value = false;
   await hub.fetchMe(userId);
 }
 
-function toggleDept(id: string) {
-  if (multiDept.value) {
-    const idx = tempSelectedDepts.value.indexOf(id);
-    if (idx >= 0) tempSelectedDepts.value.splice(idx, 1);
-    else tempSelectedDepts.value.push(id);
-  } else {
-    tempSelectedDepts.value = [id];
-  }
-}
-function cancelDeptPicker() {
-  deptPickerOpen.value = false;
-  tempSelectedDepts.value = [...hub.selectedDeptIds.value];
-}
-async function applyDeptPicker() {
-  deptPickerOpen.value = false;
-  await hub.fetchTeam(tempSelectedDepts.value);
-}
-
-// ── Navigation ─────────────────────────────────────────────────────────
+// ── Navigation ──
 function goToInbox() { router.push('/chat'); }
 function goToAppts() { router.push('/appointments'); }
 function goToContacts() { router.push('/contacts'); }
 function goToConv(id: string) { router.push(`/chat?conv=${id}`); }
+function goToLeadPool() { router.push('/lead-pool'); }
+function goToCareSessions() { router.push('/automation/care-sessions'); }
+function goToMarketing() { router.push('/marketing'); }
 
-// ── Format helpers ─────────────────────────────────────────────────────
+// ── Format helpers ──
 function firstName(full?: string | null): string {
   if (!full) return 'bạn';
   const parts = full.trim().split(/\s+/);
@@ -555,60 +568,53 @@ function initials(name?: string | null): string {
 function ago(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 60000) return 'vừa xong';
-  if (ms < 3600000) return Math.floor(ms / 60000) + 'p';
-  if (ms < 86400000) return Math.floor(ms / 3600000) + 'g';
-  return Math.floor(ms / 86400000) + 'ngày';
+  if (ms < 3600000) return Math.floor(ms / 60000) + ' phút trước';
+  if (ms < 86400000) return Math.floor(ms / 3600000) + ' giờ trước';
+  return Math.floor(ms / 86400000) + ' ngày trước';
 }
-function apptTime(iso: string): string {
+function apptHM(iso: string, time: string | null): string {
+  if (time) return time;
   const d = new Date(iso);
-  return d.getHours().toString().padStart(2, '0');
+  return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
 }
-function pct(num: number | null, max: number): number {
-  if (num === null || max === 0) return 0;
-  return Math.min(100, Math.round((num / max) * 100));
+function quotaSeg(msgs: number | null): string {
+  const v = msgs ?? 0;
+  const pct = Math.min(100, Math.round((v / 300) * 100));
+  const color = v > 270 ? 'var(--at-atlas-danger)' : v > 210 ? 'var(--at-atlas-warning)' : 'var(--at-atlas-success)';
+  return `width:${pct}%;background:${color}`;
+}
+function bandSeg(mid: number | undefined, hi: number | undefined, midColor: string, hiColor: string): string {
+  // bar 2-segment: mid (40-69) + hi (70+). Tổng width tỷ lệ theo (mid+hi) so 100% giả định ~ nhiều.
+  const m = mid ?? 0; const h = hi ?? 0; const tot = Math.max(1, m + h);
+  const midPct = Math.round((m / tot) * 100);
+  return `width:100%;background:linear-gradient(90deg, ${midColor} ${midPct}%, ${hiColor} ${midPct}%)`;
+}
+const AV_BG = ['linear-gradient(135deg,#60a5fa,#2962ff)', 'linear-gradient(135deg,#34d399,#16a34a)', 'linear-gradient(135deg,#f59e0b,#d97706)', 'linear-gradient(135deg,#a78bfa,#7c3aed)', 'linear-gradient(135deg,#f87171,#dc2626)'];
+function avBg(seed: string): string {
+  let s = 0; for (let i = 0; i < seed.length; i++) s += seed.charCodeAt(i);
+  return `background:${AV_BG[s % AV_BG.length]}`;
 }
 
-// ── KpiCard inline component ───────────────────────────────────────────
-const KpiCard: Component = {
-  props: {
-    label: { type: String, required: true },
-    value: { type: Number, default: null },
-    split: { type: Object as () => PrivacySplit | null, default: null },
-    danger: { type: Boolean, default: false },
-    warn: { type: Boolean, default: false },
-  },
-  emits: ['click'],
-  setup(props, { emit }) {
-    return () => h(
-      'div',
-      {
-        class: ['dh-kpi', { danger: props.danger, warn: props.warn && !props.danger }],
-        onClick: () => emit('click'),
-      },
-      [
-        h('div', { class: 'dh-kpi-label' }, props.label),
-        h('div', { class: 'dh-kpi-val' }, [
-          props.split !== null
-            ? [
-                h('span', String(props.split.public)),
-                props.split.private > 0
-                  ? h('span', { class: 'dh-kpi-split' }, `+🔒${props.split.private}`)
-                  : null,
-              ]
-            : h('span', String(props.value)),
-        ]),
-      ],
-    );
+// ── Privacy value inline component (thay emoji +🔒 bằng Lucide Lock) ──
+const PrivVal: Component = {
+  props: { split: { type: Object as () => PrivacySplit | undefined, default: undefined } },
+  setup(props) {
+    return () => {
+      const s = props.split;
+      if (!s) return h('span', '0');
+      const children: ReturnType<typeof h>[] = [h('span', String(s.public))];
+      if (s.private > 0) {
+        children.push(h('span', { class: 'at-kpi-priv' }, [h(Lock, { size: 11, strokeWidth: 2.2 }), String(s.private)]));
+      }
+      return h('span', { style: 'display:inline-flex;align-items:center' }, children);
+    };
   },
 };
 
-// ── Mount ──────────────────────────────────────────────────────────────
+// ── Mount ──
 onMounted(async () => {
   await hub.fetchAll();
   tempSelectedDepts.value = [...hub.selectedDeptIds.value];
-
-  // Close picker on outside click. 2026-06-09: tách handler + cleanup onUnmounted
-  // (trước đây arrow inline KHÔNG remove → leak listener cộng dồn mỗi lần vào /).
   document.addEventListener('click', onOutsideClick);
 });
 onUnmounted(() => {
@@ -618,483 +624,38 @@ function onOutsideClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (!target.closest('.dh-scope')) {
     userPickerOpen.value = false;
-    deptPickerOpen.value = false;
   }
 }
 </script>
 
 <style scoped>
-.dh-wrap {
-  padding: 8px 4px;
+.dh-v4 {
   max-width: 1366px;
   margin: 0 auto;
+  /* Score line màu theo 3 hệ điểm */
+  --lead-c: #d97706;
+  --eng-c: #2563eb;
+  --prio-c: #dc2626;
 }
-.contact-marquee {
-  display: block;
-  width: 25%;
-  margin: 0 0 10px auto;
-  padding: 6px 10px;
-  background: rgba(0,242,255,0.08);
-  border: 1px solid rgba(0,242,255,0.25);
-  border-radius: 6px;
-  color: #00d4e0;
-  font-size: 12px;
-  font-weight: 500;
-  text-decoration: none;
-  overflow: hidden;
-  white-space: nowrap;
+.dh-attr {
+  font-size: 10px; color: var(--at-hint, #97a0b3);
+  padding: 2px 14px; text-align: center; opacity: 0.7;
 }
-.marquee-track {
-  display: inline-block;
-  animation: marquee 30s linear infinite;
-  padding-left: 100%;
-}
-@keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+.dh-tabpanel { animation: dh-fade 0.15s ease-out; }
+@keyframes dh-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
-/* Sticky scroll-nav */
-.dh-scrollnav {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: rgba(241,245,249,0.95);
-  backdrop-filter: blur(8px);
-  padding: 8px 12px;
-  margin: 0 -4px 12px;
-  border-bottom: 1px solid #e2e8f0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
+/* Picker dropdown (giữ từ bản cũ, Atlas-ish) */
+.dh-pdd {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
+  width: 260px; max-height: 360px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--at-hairline, #e2e8f0);
+  border-radius: 9px; box-shadow: 0 8px 28px rgba(15,23,42,0.16); padding: 6px;
 }
-.dh-crumb {
-  padding: 5px 12px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  color: #475569;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-block;
-}
-.dh-crumb.active { background: #2962ff; color: #fff; border-color: #2962ff; }
-.dh-sep { color: #94a3b8; }
-.dh-sn-hint { margin-left: auto; color: #94a3b8; font-size: 11px; }
-
-/* Section */
-.dh-section { margin-bottom: 20px; }
-
-/* Section header strip */
-.dh-strip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  margin-bottom: 10px;
-  border-top: 2px dashed #cbd5e1;
-}
-.dh-strip.first { border-top: none; padding-top: 0; }
-.dh-strip-icon {
-  width: 36px; height: 36px;
-  border-radius: 8px;
-  background: #e3edff;
-  color: #2962ff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-}
-.dh-strip-icon.team { background: #dcfce7; color: #16a34a; }
-.dh-strip-icon.system { background: #fee2e2; color: #dc2626; }
-.dh-strip-text { flex: 1; }
-.dh-strip-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: #0f172a;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dh-strip-sub {
-  font-size: 12px;
-  color: #475569;
-  margin-top: 2px;
-}
-.dh-strip-actions { display: flex; gap: 6px; }
-.dh-danger { color: #dc2626; }
-.dh-success { color: #16a34a; }
-
-/* Scope chip + picker */
-.dh-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 11px;
-  border-radius: 14px;
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid;
-  position: relative;
-  user-select: none;
-}
-.dh-scope.self { background: #cffafe; color: #0891b2; border-color: rgba(8,145,178,0.3); }
-.dh-scope.team { background: #dcfce7; color: #16a34a; border-color: rgba(22,163,74,0.3); }
-.dh-scope.system { background: #fee2e2; color: #dc2626; border-color: rgba(220,38,38,0.3); }
-.dh-scope.locked { cursor: not-allowed; opacity: 0.95; }
-.dh-caret { font-size: 9px; }
-.dh-lock-ico { font-size: 10px; }
-
-.dh-picker-dd {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  background: #fff;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(15,23,42,0.15);
-  min-width: 280px;
-  max-height: 360px;
-  overflow-y: auto;
-  padding: 6px;
-  z-index: 50;
-  font-weight: 500;
-  color: #0f172a;
-}
-.dh-pdd-search {
-  width: 100%; height: 28px;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  padding: 0 8px;
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-.dh-pdd-group {
-  font-size: 10px; color: #94a3b8;
-  text-transform: uppercase; letter-spacing: 0.4px;
-  padding: 5px 8px 2px;
-  font-weight: 700;
-}
-.dh-pdd-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.dh-pdd-item:hover { background: #f1f5f9; }
-.dh-pdd-item.active { background: #e3edff; color: #2962ff; font-weight: 600; }
-.dh-pdd-meta { margin-left: auto; color: #94a3b8; font-size: 10px; }
-.dh-pdd-check {
-  width: 14px; height: 14px;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 3px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9px; color: #2962ff;
-  flex-shrink: 0;
-}
-.dh-pdd-check.on { background: #2962ff; color: #fff; border-color: #2962ff; }
-.dh-pdd-actions {
-  display: flex; gap: 6px;
-  padding: 6px 4px 2px;
-  border-top: 1px solid #e2e8f0;
-  margin-top: 6px;
-  justify-content: flex-end;
-}
-
-/* Buttons */
-.dh-btn {
-  height: 30px; padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  font-size: 12px; font-weight: 500;
-  color: #0f172a;
-  cursor: pointer;
-}
-.dh-btn:hover { background: #f8fafc; }
-.dh-btn.primary { background: #2962ff; color: #fff; border-color: #2962ff; }
-.dh-btn.primary:hover { background: #1e4eda; }
-.dh-btn-mini {
-  height: 24px; padding: 0 8px;
-  border-radius: 4px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  font-size: 11px;
-  cursor: pointer;
-  color: #2962ff;
-}
-.dh-btn-mini:hover { background: #e3edff; }
-
-/* KPI strip */
-.dh-kpis {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.dh-kpi {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.dh-kpi:hover { border-color: #2962ff; box-shadow: 0 2px 6px rgba(41,98,255,0.10); }
-.dh-kpi.warn { border-left: 3px solid #d97706; background: linear-gradient(135deg,#fffbeb 0%,#fff 60%); }
-.dh-kpi.danger { border-left: 3px solid #dc2626; background: linear-gradient(135deg,#fef2f2 0%,#fff 60%); }
-.dh-kpi-label {
-  font-size: 10.5px;
-  color: #475569;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-.dh-kpi-val {
-  font-size: 22px;
-  font-weight: 700;
-  color: #0f172a;
-  line-height: 1.1;
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.dh-kpi-split {
-  font-size: 11px;
-  color: #92400e;
-  font-weight: 600;
-  background: #fef3c7;
-  padding: 1px 6px;
-  border-radius: 8px;
-  margin-left: 4px;
-}
-
-/* Grid 2-col */
-.dh-grid2 {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 10px;
-}
-.dh-col, .dh-col-right {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.dh-card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  overflow: hidden;
-}
-.dh-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 11px;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-}
-.dh-card-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
-}
-.dh-badge {
-  background: #dc2626; color: #fff;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 700;
-}
-.dh-badge.warn { background: #d97706; }
-.dh-link {
-  font-size: 11px;
-  color: #2962ff;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: none;
-}
-.dh-link:hover { text-decoration: underline; }
-.dh-card-body { padding: 4px 0; max-height: 260px; overflow-y: auto; }
-.dh-empty {
-  padding: 16px;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-/* Item row */
-.dh-item {
-  display: grid;
-  grid-template-columns: 32px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 11px;
-  cursor: pointer;
-  border-bottom: 1px solid #f1f5f9;
-}
-.dh-item:last-child { border-bottom: none; }
-.dh-item:hover { background: #f8fafc; }
-.dh-item-av {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #60a5fa, #2962ff);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600;
-  flex-shrink: 0;
-}
-.dh-item-av.appt {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  font-size: 13px;
-}
-.dh-item-body { min-width: 0; }
-.dh-item-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dh-item-meta {
-  font-size: 11px;
-  color: #475569;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 1px;
-}
-.dh-item-time {
-  font-size: 10.5px;
-  color: #94a3b8;
-  white-space: nowrap;
-  text-align: right;
-}
-
-/* Quota */
-.dh-quota-row {
-  display: grid;
-  grid-template-columns: 90px 1fr 60px;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 11px;
-  font-size: 11.5px;
-}
-.dh-quota-name { color: #0f172a; font-weight: 500; }
-.dh-quota-name.locked { color: #d97706; }
-.dh-quota-bar { height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
-.dh-quota-fill { height: 100%; background: linear-gradient(90deg, #16a34a, #22c55e); }
-.dh-quota-fill.warn { background: linear-gradient(90deg, #d97706, #f59e0b); }
-.dh-quota-fill.danger { background: linear-gradient(90deg, #dc2626, #ef4444); }
-.dh-quota-fill.locked {
-  background: repeating-linear-gradient(45deg, #fef3c7, #fef3c7 4px, #fde68a 4px, #fde68a 8px);
-}
-.dh-quota-val { font-size: 10.5px; color: #475569; text-align: right; font-weight: 600; }
-
-/* Privacy banner */
-.dh-priv-banner {
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-  border: 1px solid #f59e0b;
-  border-left: 3px solid #d97706;
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11.5px;
-  color: #78350f;
-}
-.dh-priv-banner strong { color: #92400e; }
-.dh-priv-ico { font-size: 18px; }
-
-/* Audit bar */
-.dh-audit-bar {
-  background: linear-gradient(90deg, #e0e7ff 0%, #ede9fe 100%);
-  border: 1px solid #c7d2fe;
-  border-radius: 6px;
-  padding: 6px 12px;
-  margin-bottom: 8px;
-  font-size: 11.5px;
-  color: #4338ca;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.dh-audit-ico { font-size: 14px; }
-.dh-audit-link { color: #4338ca; font-weight: 600; text-decoration: none; cursor: pointer; }
-.dh-audit-link:hover { text-decoration: underline; }
-
-/* Team table */
-.dh-team-tbl {
-  width: 100%;
-  font-size: 11.5px;
-  border-collapse: collapse;
-}
-.dh-team-tbl th {
-  text-align: left;
-  padding: 6px 10px;
-  color: #475569;
-  font-weight: 600;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-}
-.dh-team-tbl td {
-  padding: 6px 10px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #0f172a;
-}
-.dh-team-tbl tr:hover td { background: #f8fafc; }
-.dh-team-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
-.dh-team-name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.dh-team-av {
-  width: 24px; height: 24px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #60a5fa, #2962ff);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 600;
-}
-.dh-team-av.dept {
-  background: linear-gradient(135deg, #34d399, #16a34a);
-  border-radius: 4px;
-}
-.dh-tag {
-  font-size: 9.5px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 600;
-  background: #e3edff;
-  color: #2962ff;
-}
-.dh-tag.lock { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
-.dh-locksplit {
-  font-size: 9.5px;
-  padding: 1px 5px;
-  background: #fef3c7;
-  color: #92400e;
-  border-radius: 6px;
-  font-weight: 700;
-  margin-left: 4px;
-  border: 1px solid #fcd34d;
-}
-
-.dh-loading {
-  text-align: center;
-  padding: 24px;
-  color: #94a3b8;
-  font-size: 12px;
-}
+.dh-pdd-search { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--at-hairline, #eef2f6); margin-bottom: 4px; color: var(--at-hint, #97a0b3); }
+.dh-pdd-search input { border: 0; outline: 0; flex: 1; font-size: 12.5px; font-family: inherit; }
+.dh-pdd-group { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--at-hint, #94a3b8); padding: 6px 8px 2px; letter-spacing: 0.3px; }
+.dh-pdd-item { padding: 6px 8px; font-size: 12.5px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.dh-pdd-item:hover { background: var(--at-surface-soft, #f8fafc); }
+.dh-pdd-item.active { background: var(--at-action-soft, #e4f1f8); color: var(--at-action, #1786be); font-weight: 600; }
+.dh-pdd-dept { font-size: 10.5px; color: var(--at-hint, #94a3b8); }
 </style>

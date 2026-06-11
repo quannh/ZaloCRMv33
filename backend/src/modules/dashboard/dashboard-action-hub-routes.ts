@@ -201,6 +201,45 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
           }),
         ]);
 
+      // Prefetch nick của target (dùng cho cả tương tác hôm nay + quota nick bên dưới).
+      const quotaNicksPrefetch = await prisma.zaloAccount.findMany({
+        where: { orgId: viewer.orgId, ownerUserId: targetUserId, archivedAt: null },
+        select: { id: true, displayName: true, privacyMode: true },
+      });
+
+      // 🔭 Phiên theo dõi (CareSession) — REUSE model, RBAC theo ownerUserId.
+      // Dashboard v4 2026-06-11. active = đang theo dõi; replied = KH rep trong 24h;
+      // paused = luồng bám đuổi đang tạm dừng.
+      const dayAgo = new Date(Date.now() - 86400000);
+      const [sessActive, sessReplied, sessPaused, sessClosedMonth] = await Promise.all([
+        prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: targetUserId, state: 'active' } }),
+        prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: targetUserId, state: 'active', lastReplyAt: { gte: dayAgo } } }),
+        prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: targetUserId, state: 'active', pausedUntil: { gt: new Date() } } }),
+        prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: targetUserId, state: 'closed', closedAt: { gte: monthStart } } }),
+      ]);
+
+      // 📊 Điểm số KH (Lead/Tương tác/Ưu tiên) — trung bình + 3-bucket histogram.
+      // REUSE Contact.leadScore/engagementScore/priorityScore (scoring cron 02:30).
+      const scoreWhere = { orgId: viewer.orgId, assignedUserId: targetUserId };
+      const [scoreAvg, leadBucketsHi, leadBucketsMid, engBucketsHi, engBucketsMid, prioHigh] = await Promise.all([
+        prisma.contact.aggregate({ where: scoreWhere, _avg: { leadScore: true, engagementScore: true } }),
+        prisma.contact.count({ where: { ...scoreWhere, leadScore: { gte: 70 } } }),
+        prisma.contact.count({ where: { ...scoreWhere, leadScore: { gte: 40, lt: 70 } } }),
+        prisma.contact.count({ where: { ...scoreWhere, engagementScore: { gte: 70 } } }),
+        prisma.contact.count({ where: { ...scoreWhere, engagementScore: { gte: 40, lt: 70 } } }),
+        prisma.contact.count({ where: { ...scoreWhere, priorityScore: { gte: 70 } } }),
+      ]);
+
+      // 🏷️ Trạng thái KH + 📈 Tương tác hôm nay (bạn mới / lead mới / tin gửi).
+      const ownedNickIds = quotaNicksPrefetch.map((n) => n.id);
+      const [statusGroups, msgSentToday, msgRepliedToday, friendsToday, leadsToday] = await Promise.all([
+        prisma.contact.groupBy({ by: ['status'], where: { orgId: viewer.orgId, assignedUserId: targetUserId }, _count: true }),
+        prisma.message.count({ where: { conversation: { zaloAccountId: { in: ownedNickIds } }, senderType: 'self', sentAt: { gte: today, lt: tomorrow } } }),
+        prisma.message.count({ where: { conversation: { zaloAccountId: { in: ownedNickIds } }, senderType: 'contact', sentAt: { gte: today, lt: tomorrow } } }),
+        prisma.friendshipAttempt.count({ where: { zaloAccountId: { in: ownedNickIds }, state: 'accepted', queuedAt: { gte: today, lt: tomorrow } } }),
+        prisma.contact.count({ where: { orgId: viewer.orgId, assignedUserId: targetUserId, createdAt: { gte: today, lt: tomorrow } } }),
+      ]);
+
       // Urgent list — top 5 conversation chưa rep, chỉ nick public (privacy blur
       // ở client cho main-nick, BE không trả nội dung của main-nick)
       const publicNicks = await prisma.zaloAccount.findMany({
@@ -256,21 +295,47 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         take: 5,
       });
 
-      // Quota nick — count msg today + friend req today per nick (public only)
-      const quotaNicks = await prisma.zaloAccount.findMany({
-        where: { orgId: viewer.orgId, ownerUserId: targetUserId, archivedAt: null },
-        select: {
-          id: true,
-          displayName: true,
-          privacyMode: true,
-        },
-      });
+      // 🔔 Nhắc nhở — hẹn QUÁ HẠN + hẹn NGÀY MAI + 🎂 sinh nhật hôm nay.
+      // (hẹn hôm nay đã có ở todayAppts). Tất cả theo assignedUserId = target.
+      const dayAfter = new Date(tomorrow.getTime() + 86400000);
+      const [overdueAppts, tomorrowAppts, birthdayRows] = await Promise.all([
+        prisma.appointment.findMany({
+          where: { orgId: viewer.orgId, assignedUserId: targetUserId, status: 'scheduled', appointmentDate: { lt: today } },
+          select: { id: true, title: true, appointmentDate: true, appointmentTime: true, location: true, contact: { select: { id: true, fullName: true } } },
+          orderBy: { appointmentDate: 'desc' }, take: 5,
+        }),
+        prisma.appointment.findMany({
+          where: { orgId: viewer.orgId, assignedUserId: targetUserId, status: 'scheduled', appointmentDate: { gte: tomorrow, lt: dayAfter } },
+          select: { id: true, title: true, appointmentDate: true, appointmentTime: true, location: true, contact: { select: { id: true, fullName: true } } },
+          orderBy: { appointmentDate: 'asc' }, take: 5,
+        }),
+        // 🎂 Sinh nhật hôm nay — so MM-DD (bỏ năm) theo org TZ. REUSE Contact.birthDate.
+        prisma.$queryRaw<Array<{ id: string; full_name: string | null }>>`
+          SELECT id, full_name FROM contacts
+          WHERE org_id = ${viewer.orgId} AND assigned_user_id = ${targetUserId}
+            AND birth_date IS NOT NULL
+            AND to_char(birth_date, 'MM-DD') = to_char((now() AT TIME ZONE 'Asia/Ho_Chi_Minh'), 'MM-DD')
+          LIMIT 5
+        `,
+      ]);
+
+      // 🔖 Tag phổ biến — top 5 tag CRM trên Contact của target (Contact.tags = Json array).
+      const topTagRows = await prisma.$queryRaw<Array<{ tag: string; n: bigint }>>`
+        SELECT tag, COUNT(*)::bigint AS n
+        FROM contacts c, jsonb_array_elements_text(c.tags) AS tag
+        WHERE c.org_id = ${viewer.orgId} AND c.assigned_user_id = ${targetUserId}
+          AND tag NOT LIKE 'auto:%' AND length(tag) >= 2
+        GROUP BY tag ORDER BY n DESC LIMIT 5
+      `;
+
+      // Quota nick — count msg today + friend req today per nick (public only).
+      // Tái dùng quotaNicksPrefetch (đã query ở trên) — tránh query nick 2 lần.
       const quotaData = await Promise.all(
-        quotaNicks.map(async (n) => {
+        quotaNicksPrefetch.map(async (n) => {
           if (n.privacyMode === 'main') {
             return {
               id: n.id,
-              displayName: '🔒 Nick riêng tư',
+              displayName: 'Nick riêng tư',
               isPrivate: true,
               messagesToday: null,
               friendsToday: null,
@@ -301,6 +366,12 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         }),
       );
 
+      // Map appointment → reminder item (dùng chung shape).
+      const apptItem = (a: { id: string; title: string | null; appointmentDate: Date; appointmentTime: string | null; location: string | null; contact: { id: string; fullName: string | null } | null }) => ({
+        id: a.id, title: a.title, appointmentDate: a.appointmentDate, appointmentTime: a.appointmentTime,
+        location: a.location, contactId: a.contact?.id, contactName: a.contact?.fullName,
+      });
+
       return {
         targetUserId,
         isViewingSelf: targetUserId === viewer.id,
@@ -310,6 +381,43 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
           dormantContacts: dormantSplit,
           totalContacts: contactsCount,
           closedThisMonth,
+          // 🔭 Phiên theo dõi đang mở (KPI mới)
+          followSessions: sessActive,
+        },
+        // 🔭 Phiên theo dõi — ministats
+        sessions: {
+          active: sessActive,
+          replied: sessReplied,
+          paused: sessPaused,
+          closedThisMonth: sessClosedMonth,
+        },
+        // 🔔 Nhắc nhở — gộp 4 nhóm
+        reminders: {
+          overdue: overdueAppts.map(apptItem),
+          today: todayAppts.map(apptItem),
+          tomorrow: tomorrowAppts.map(apptItem),
+          birthdays: birthdayRows.map((b) => ({ id: b.id, contactName: b.full_name ?? 'Không tên' })),
+        },
+        // 📊 Điểm số KH
+        scores: {
+          leadAvg: Math.round(scoreAvg._avg.leadScore ?? 0),
+          engagementAvg: Math.round(scoreAvg._avg.engagementScore ?? 0),
+          priorityHigh: prioHigh,
+          leadHi: leadBucketsHi, leadMid: leadBucketsMid,
+          engHi: engBucketsHi, engMid: engBucketsMid,
+        },
+        // 🏷️ Trạng thái KH
+        statusBreakdown: statusGroups.map((g) => ({ status: g.status ?? 'khac', count: g._count })),
+        // 🔖 Tag phổ biến
+        topTags: topTagRows.map((t) => ({ tag: t.tag, count: Number(t.n) })),
+        // 📈 Tương tác hôm nay
+        interactionToday: {
+          sent: msgSentToday,
+          replied: msgRepliedToday,
+          // Cap 100%: KH có thể nhắn nhiều hơn số tin mình gửi (replied > sent) → vẫn 100%.
+          replyRate: msgSentToday > 0 ? Math.min(100, Math.round((msgRepliedToday / msgSentToday) * 100)) : 0,
+          newFriends: friendsToday,
+          newLeads: leadsToday,
         },
         urgent: urgentConvs.map((c) => ({
           conversationId: c.id,
@@ -492,6 +600,27 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
       // Top performer
       const topUser = [...perUser].sort((a, b) => b.closedThisWeek - a.closedThisWeek)[0];
 
+      // 🔭 Phiên theo dõi team + 📈 hiệu suất phản hồi team + 🎁 lead pool team.
+      // Dashboard v4 2026-06-11 — REUSE careSession + message + contact theo visibleUserIds.
+      const teamNicks = await prisma.zaloAccount.findMany({
+        where: { orgId: viewer.orgId, ownerUserId: { in: visibleUserIds }, archivedAt: null },
+        select: { id: true },
+      });
+      const teamNickIds = teamNicks.map((n) => n.id);
+      const [sessTeamActive, sessTeamReplied, teamSent, teamReplied, leadPending, leadClaimedToday, leadForgotten] =
+        await Promise.all([
+          prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: { in: visibleUserIds }, state: 'active' } }),
+          prisma.careSession.count({ where: { orgId: viewer.orgId, ownerUserId: { in: visibleUserIds }, state: 'active', lastReplyAt: { gte: new Date(Date.now() - 86400000) } } }),
+          prisma.message.count({ where: { conversation: { zaloAccountId: { in: teamNickIds } }, senderType: 'self', sentAt: { gte: today, lt: tomorrow } } }),
+          prisma.message.count({ where: { conversation: { zaloAccountId: { in: teamNickIds } }, senderType: 'contact', sentAt: { gte: today, lt: tomorrow } } }),
+          // Lead Pool — KH chưa giao (assignedUserId null) trong org. Đếm nhẹ.
+          prisma.contact.count({ where: { orgId: viewer.orgId, assignedUserId: null } }),
+          // Nhận hôm nay = KH được giao cho team + tạo hôm nay (lead mới về tay team).
+          prisma.contact.count({ where: { orgId: viewer.orgId, assignedUserId: { in: visibleUserIds }, createdAt: { gte: today, lt: tomorrow } } }),
+          // KH bị bỏ quên: idle > 30 ngày (lastMessageAt cũ) trong scope.
+          prisma.conversation.count({ where: { orgId: viewer.orgId, zaloAccountId: { in: teamNickIds }, threadType: 'user', deletedAt: null, lastMessageAt: { lt: new Date(Date.now() - 30 * 86400000) }, contactId: { not: null } } }),
+        ]);
+
       return {
         scope: {
           canViewAll: scope.canViewAll,
@@ -503,6 +632,16 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
           ? { userId: topUser.userId, fullName: topUser.fullName, closedThisWeek: topUser.closedThisWeek }
           : null,
         perUser: perUser.sort((a, b) => b.closedThisWeek - a.closedThisWeek),
+        // 🔭 Phiên theo dõi team (KPI mới)
+        followSessions: { active: sessTeamActive, replied: sessTeamReplied },
+        // 📈 Hiệu suất phản hồi team
+        responsePerf: {
+          sent: teamSent,
+          replied: teamReplied,
+          replyRate: teamSent > 0 ? Math.min(100, Math.round((teamReplied / teamSent) * 100)) : 0,
+        },
+        // 🎁 Lead Pool team
+        leadPool: { pending: leadPending, claimedToday: leadClaimedToday, forgotten: leadForgotten },
       };
     } catch (err) {
       logger.error('[dashboard-action-hub] /team error:', err);
@@ -631,6 +770,11 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         where: { orgId: viewer.orgId },
       });
 
+      // 🔭 Phiên theo dõi toàn org (KPI mới Dashboard v4 2026-06-11)
+      const followSessionsOrg = await prisma.careSession.count({
+        where: { orgId: viewer.orgId, state: 'active' },
+      });
+
       return {
         orgKpi: {
           totalNicks,
@@ -644,6 +788,7 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
           newLeadsThisMonth,
           totalContacts,
           auditCountToday,
+          followSessions: followSessionsOrg,
         },
         deptRanking: deptRanking.sort((a, b) => b.closedThisMonth - a.closedThisMonth),
         funnel: funnelGroups.map((g) => ({ status: g.status, count: g._count })),

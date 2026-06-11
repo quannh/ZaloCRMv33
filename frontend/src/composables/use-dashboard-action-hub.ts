@@ -22,6 +22,45 @@ export interface MeKpi {
   dormantContacts: PrivacySplit;
   totalContacts: number;
   closedThisMonth: number;
+  /** Dashboard v4 — số phiên theo dõi đang mở */
+  followSessions?: number;
+}
+
+// ── Dashboard v4 2026-06-11 — widget mới ──────────────────────────────────
+export interface SessionsSummary {
+  active: number;
+  replied: number;
+  paused: number;
+  closedThisMonth: number;
+}
+export interface ReminderAppt {
+  id: string;
+  title: string | null;
+  appointmentDate: string;
+  appointmentTime: string | null;
+  location: string | null;
+  contactId?: string;
+  contactName?: string | null;
+}
+export interface RemindersBlock {
+  overdue: ReminderAppt[];
+  today: ReminderAppt[];
+  tomorrow: ReminderAppt[];
+  birthdays: Array<{ id: string; contactName: string }>;
+}
+export interface ScoresBlock {
+  leadAvg: number;
+  engagementAvg: number;
+  priorityHigh: number;
+  leadHi: number; leadMid: number;
+  engHi: number; engMid: number;
+}
+export interface InteractionToday {
+  sent: number;
+  replied: number;
+  replyRate: number;
+  newFriends: number;
+  newLeads: number;
 }
 
 export interface UrgentItem {
@@ -60,6 +99,13 @@ export interface MeResponse {
   urgent: UrgentItem[];
   appointments: AppointmentItem[];
   quotaNicks: QuotaNick[];
+  // Dashboard v4 — widget mới
+  sessions?: SessionsSummary;
+  reminders?: RemindersBlock;
+  scores?: ScoresBlock;
+  statusBreakdown?: Array<{ status: string; count: number }>;
+  topTags?: Array<{ tag: string; count: number }>;
+  interactionToday?: InteractionToday;
 }
 
 export interface TeamUser {
@@ -86,6 +132,10 @@ export interface TeamResponse {
   };
   topUser: { userId: string; fullName: string; closedThisWeek: number } | null;
   perUser: TeamUser[];
+  // Dashboard v4 — widget mới
+  followSessions?: { active: number; replied: number };
+  responsePerf?: { sent: number; replied: number; replyRate: number };
+  leadPool?: { pending: number; claimedToday: number; forgotten: number };
 }
 
 export interface SystemResponse {
@@ -95,6 +145,7 @@ export interface SystemResponse {
     newLeadsThisMonth: number;
     totalContacts: number;
     auditCountToday: number;
+    followSessions?: number;
   };
   deptRanking: Array<{
     departmentId: string;
@@ -147,16 +198,12 @@ export function useDashboardActionHub() {
   const loadingTeam = ref(false);
   const loadingSystem = ref(false);
 
-  // Role gating — section render quyết định ở component, đây chỉ helper
+  // Role gating — section render quyết định ở component, đây chỉ helper.
+  // 2026-06-11 Dashboard v4: /profile giờ trả deptRole + canViewAll → auth.isManager
+  // (leader/deputy/admin/grant view_all) quyết tab "Quản lý team". /team + /system
+  // VẪN enforce RBAC ở server (requireGrant + getOwnerScope) — đây chỉ ẩn/hiện tab.
   const isAdmin = computed(() => auth.isAdmin);
-  const hasTeamSection = computed(() => {
-    // Trưởng phòng có dept_role='leader'|'deputy' hoặc admin
-    if (isAdmin.value) return true;
-    // FE chưa biết deptRole của user, BE đã có grant check.
-    // Tạm: nếu user có legacy role 'admin'|'owner', show team. Sau Phase RBAC
-    // FE đầy đủ sẽ check via /rbac/me.
-    return false;
-  });
+  const hasTeamSection = computed(() => auth.isManager);
   const hasSystemSection = computed(() => isAdmin.value);
 
   async function fetchMe(asUserId?: string | null) {

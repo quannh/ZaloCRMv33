@@ -20,6 +20,10 @@ interface User {
   grants?: Record<string, Record<string, boolean>>;
   permissionGroupName?: string | null;
   isFullAccess?: boolean;
+  // Dashboard v4 2026-06-11 — vai trò phòng ban + cờ xem-tất-cả, quyết hiện mấy tab dashboard.
+  deptRole?: string | null;       // 'leader' | 'deputy' | 'member' | null
+  departmentId?: string | null;
+  canViewAll?: boolean;
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -30,6 +34,15 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value && !!user.value);
   const isOwner = computed(() => user.value?.role === 'owner');
   const isAdmin = computed(() => ['owner', 'admin'].includes(user.value?.role || ''));
+  // Dashboard v4 — "trưởng phòng trở lên": admin/owner, hoặc trưởng/phó phòng, hoặc
+  // có grant xem-tất-cả (vd Marketing/CEO). Dùng quyết hiện tab "Quản lý team".
+  const isManager = computed(() => {
+    const u = user.value;
+    if (!u) return false;
+    if (['owner', 'admin'].includes(u.role || '')) return true;
+    if (['leader', 'deputy'].includes(u.deptRole || '')) return true;
+    return u.canViewAll === true;
+  });
 
   /**
    * RBAC enforce 2026-06-08 — kiểm user hiện tại có quyền (resource, action) không.
@@ -73,6 +86,9 @@ export const useAuthStore = defineStore('auth', () => {
       grants: res.data.user.grants ?? {},
       permissionGroupName: res.data.user.permissionGroup?.name ?? null,
       isFullAccess: res.data.user.isFullAccess ?? false,
+      deptRole: res.data.user.deptRole ?? null,
+      departmentId: res.data.user.departmentId ?? null,
+      canViewAll: res.data.user.canViewAll ?? false,
     };
     // Phase 2: persistTokens set token.value + lưu access + refreshToken.
     persistTokens(res.data.token, res.data.refreshToken);
@@ -97,6 +113,9 @@ export const useAuthStore = defineStore('auth', () => {
         grants: data.grants ?? {},
         permissionGroupName: data.permissionGroup?.name ?? null,
         isFullAccess: data.isFullAccess ?? false,
+        deptRole: data.deptRole ?? null,
+        departmentId: data.departmentId ?? null,
+        canViewAll: data.canViewAll ?? false,
       };
       refreshOrgTimezone(tz);
     } catch {
@@ -120,5 +139,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, token, needsSetup, isAuthenticated, isOwner, isAdmin, canAccess, checkSetup, setup, login, fetchProfile, logout, init };
+  return { user, token, needsSetup, isAuthenticated, isOwner, isAdmin, isManager, canAccess, checkSetup, setup, login, fetchProfile, logout, init };
 });
