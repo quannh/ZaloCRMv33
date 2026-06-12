@@ -9,6 +9,9 @@
           <input v-model="search" placeholder="Tìm ảnh, tag dự án…" @input="debouncedReload" />
         </div>
         <button class="btn-dark" @click="triggerUpload">+ Tải lên</button>
+        <button class="btn-trash" :class="{ on: trashMode }" :title="trashMode ? 'Đóng thùng rác' : 'Mở thùng rác'" @click="trashMode ? closeTrash() : openTrash()">
+          <Trash2Icon :size="15" :stroke-width="1.9" /> Thùng rác
+        </button>
         <input ref="fileInput" type="file" multiple accept="image/*,video/*,.pdf,.xlsx,.docx,.zip" hidden @change="onFilesPicked" />
       </div>
     </header>
@@ -18,18 +21,76 @@
       <button v-for="t in tabs" :key="t.kind" class="tab" :class="{ on: activeKind === t.kind }" @click="setKind(t.kind)">{{ t.label }}</button>
     </nav>
 
-    <!-- Filter row -->
-    <div class="m-filter">
+    <!-- ════════ THÙNG RÁC (GĐ13a) ════════ -->
+    <section v-if="trashMode" class="m-trash">
+      <div class="trash-bar">
+        <span class="trash-ttl"><Trash2Icon :size="16" :stroke-width="1.9" /> Thùng rác · {{ trashItems.length }} mục</span>
+        <span class="trash-note">Đồ trong đây giữ 30 ngày rồi tự dọn. File gốc luôn được giữ — lịch sử chat đã gửi không bị ảnh hưởng.</span>
+        <button class="trash-empty" :disabled="trashItems.length === 0" @click="onEmptyTrash">Dọn sạch</button>
+        <button class="trash-close" title="Đóng" @click="closeTrash"><XIcon :size="15" :stroke-width="2" /></button>
+      </div>
+
+      <div v-if="trashLoading" class="m-empty"><div class="spin"></div> Đang tải…</div>
+      <div v-else-if="trashItems.length === 0" class="m-empty">
+        <div class="empty-ic"><Trash2Icon :size="40" :stroke-width="1.4" /></div>
+        <div class="empty-ttl">Thùng rác trống</div>
+        <div class="empty-sub">File anh xóa khỏi kho sẽ nằm đây 30 ngày, khôi phục lại được trước khi tự dọn.</div>
+      </div>
+
+      <div v-else class="m-grid">
+        <div v-for="a in trashItems" :key="a.id" class="card trash-card">
+          <div class="thumb">
+            <img v-if="a.thumbnailUrl" :src="a.thumbnailUrl" loading="lazy" alt="" />
+            <span v-else class="ph">{{ a.kind === 'video' ? '🎬' : a.kind === 'file' ? '📄' : '🖼' }}</span>
+            <span class="purge-badge" :class="{ soon: a.daysUntilPurge <= 3 }">còn {{ a.daysUntilPurge }} ngày</span>
+          </div>
+          <div class="meta">
+            <div class="fn" :title="a.name">{{ a.name }}</div>
+            <div class="trash-acts">
+              <button class="t-restore" @click="onRestore(a)"><RotateCcwIcon :size="13" :stroke-width="1.9" /> Khôi phục</button>
+              <button class="t-perm" title="Xóa vĩnh viễn" @click="onPermanentDelete(a)"><Trash2Icon :size="13" :stroke-width="1.9" /></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filter row — LEVER 1: Quyền (Loại = tabs ở trên) + nút Lọc sâu -->
+    <div v-if="!trashMode" class="m-filter">
       <span class="crumb">Tất cả<template v-if="activeFolder"> ▸ <b>{{ activeFolderName }}</b></template></span>
       <span v-for="tag in activeTags" :key="tag" class="chip coral" @click="toggleTag(tag)">● {{ tag }} ✕</span>
+      <button class="lvl2-btn" :class="{ on: showLever2 }" @click="showLever2 = !showLever2">⚙ Lọc sâu</button>
       <div class="vis-toggle">
         <span :class="{ on: visFilter === '' }" @click="setVis('')">Tất cả</span>
-        <span :class="{ on: visFilter === 'public' }" @click="setVis('public')">Công khai</span>
-        <span :class="{ on: visFilter === 'private' }" @click="setVis('private')">Riêng tư</span>
+        <span :class="{ on: visFilter === 'public' }" @click="setVis('public')">🌐 Công khai</span>
+        <span :class="{ on: visFilter === 'private' }" @click="setVis('private')">🔒 Riêng tư</span>
       </div>
     </div>
 
-    <div class="m-work">
+    <!-- LEVER 2: Sắp xếp / Thời gian / Size / Tag (ẩn/hiện) -->
+    <div v-if="showLever2 && !trashMode" class="m-lever2">
+      <select v-model="sortBy" class="lv2-sel" @change="reload">
+        <option value="recent">⏱ Gần đây dùng</option>
+        <option value="newest">🆕 Mới tải lên</option>
+        <option value="most_used">🔥 Hay dùng nhất</option>
+        <option value="name">🔤 Tên A→Z</option>
+      </select>
+      <select v-model="sinceBy" class="lv2-sel" @change="reload">
+        <option value="">📅 Mọi lúc</option>
+        <option value="7d">7 ngày</option>
+        <option value="30d">30 ngày</option>
+        <option value="90d">90 ngày</option>
+      </select>
+      <select v-model="sizeBy" class="lv2-sel" @change="reload">
+        <option value="">⚖ Mọi cỡ</option>
+        <option value="small">&lt; 1MB</option>
+        <option value="medium">1–10MB</option>
+        <option value="large">&gt; 10MB</option>
+      </select>
+      <input v-model="tagInput" class="lv2-tag" placeholder="🏷 lọc theo tag" @keyup.enter="applyTagFilter" @input="debouncedReload" />
+    </div>
+
+    <div v-if="!trashMode" class="m-work">
       <!-- Folder tree -->
       <aside class="m-tree">
         <div class="tree-ttl">Thư mục
@@ -68,11 +129,27 @@
           <div class="empty-hint">💡 Hoặc chuột phải ảnh trong chat → <b>Lưu vào Media</b></div>
         </div>
 
+        <!-- TỆP: list detail theo dòng (sale phân biệt được tệp nào — anh chốt 2026-06-12) -->
+        <div v-else-if="activeKind === 'file'" class="m-flist">
+          <div v-for="a in items" :key="a.id" class="frow" :class="{ sel: selected?.id === a.id }" @click="select(a)">
+            <span class="ficon" :style="{ background: fileIcon(a.name).bg, color: fileIcon(a.name).fg }">{{ fileIcon(a.name).label }}</span>
+            <div class="finfo">
+              <div class="fname" :title="a.name">{{ a.name }}</div>
+              <div class="fmeta">
+                {{ fmtSize(a.sizeBytes) }} · {{ a.visibility === 'public' ? '🌐 Công khai' : '🔒 Riêng tư' }} · đã dùng {{ a.usageCount }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ẢNH/VIDEO: grid thẻ thumbnail -->
         <div v-else class="m-grid">
           <div v-for="a in items" :key="a.id" class="card" :class="{ sel: selected?.id === a.id }" @click="select(a)">
             <div class="thumb">
               <img v-if="a.thumbnailUrl" :src="a.thumbnailUrl" loading="lazy" alt="" />
               <span v-else class="ph">{{ a.kind === 'video' ? '🎬' : a.kind === 'file' ? '📄' : '🖼' }}</span>
+              <span v-if="a.kind === 'video'" class="play-ic">▶</span>
+              <span v-if="a.kind === 'video' && a.durationSec" class="dur">{{ fmtDuration(a.durationSec) }}</span>
               <span v-if="a.visibility === 'private'" class="badge">🔒</span>
             </div>
             <div class="meta">
@@ -100,9 +177,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { listMedia, uploadMedia, listMediaFolders, createMediaFolder, mediaStats, type MediaAssetItem, type MediaFolder } from '@/api/media';
+import {
+  listMedia, uploadMedia, listMediaFolders, createMediaFolder, mediaStats,
+  listTrash, restoreMedia, permanentDeleteMedia, emptyTrash,
+  type MediaAssetItem, type MediaFolder, type TrashItem,
+} from '@/api/media';
 import { useToast } from '@/composables/use-toast';
 import MediaDetailPanel from '@/components/media/MediaDetailPanel.vue';
+import { Trash2 as Trash2Icon, RotateCcw as RotateCcwIcon, X as XIcon } from 'lucide-vue-next';
 
 const toast = useToast();
 
@@ -123,7 +205,28 @@ const activeTags = ref<string[]>([]);
 const selected = ref<MediaAssetItem | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+// LEVER 2 (lọc sâu — anh chốt 2026-06-12).
+const showLever2 = ref(false);
+const sortBy = ref<'recent' | 'newest' | 'most_used' | 'name'>('recent');
+const sinceBy = ref<'' | '7d' | '30d' | '90d'>('');
+const sizeBy = ref<'' | 'small' | 'medium' | 'large'>('');
+const tagInput = ref('');
+
 const activeFolderName = computed(() => folders.value.find((f) => f.id === activeFolder.value)?.name ?? '');
+
+function sizeRange(): { sizeMin?: number; sizeMax?: number } {
+  const MB = 1024 * 1024;
+  if (sizeBy.value === 'small') return { sizeMax: MB };
+  if (sizeBy.value === 'medium') return { sizeMin: MB, sizeMax: 10 * MB };
+  if (sizeBy.value === 'large') return { sizeMin: 10 * MB };
+  return {};
+}
+function applyTagFilter() {
+  const t = tagInput.value.trim();
+  if (t && !activeTags.value.includes(t)) activeTags.value = [...activeTags.value, t];
+  tagInput.value = '';
+  reload();
+}
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 function debouncedReload() {
@@ -141,7 +244,11 @@ async function reload() {
       q: search.value || undefined,
       visibility: visFilter.value || undefined,
       folderId: activeFolder.value || undefined,
-      tag: activeTags.value[0] || undefined,
+      tag: activeTags.value[0] || tagInput.value.trim() || undefined,
+      // Lever 2.
+      sort: sortBy.value,
+      since: sinceBy.value || undefined,
+      ...sizeRange(),
     });
   } catch (e: any) {
     toast.warning(e?.response?.data?.error || 'Không tải được kho');
@@ -154,11 +261,34 @@ async function loadFolders() {
   try { folders.value = await listMediaFolders(); } catch { /* ignore */ }
 }
 
-function setKind(k: any) { activeKind.value = k; selected.value = null; reload(); }
+function setKind(k: any) { activeKind.value = k; selected.value = null; if (trashMode.value) loadTrash(); else reload(); }
 function setVis(v: any) { visFilter.value = v; reload(); }
 function setFolder(id: string | null) { activeFolder.value = id; reload(); }
 function toggleTag(tag: string) { activeTags.value = activeTags.value.filter((t) => t !== tag); reload(); }
 function select(a: MediaAssetItem) { selected.value = a; }
+
+// Định dạng thời lượng video: 95s → "1:35".
+function fmtDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Icon + màu theo định dạng tệp (sale nhận diện nhanh PDF/Excel/Word).
+function fileIcon(name: string): { label: string; bg: string; fg: string } {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return { label: 'PDF', bg: '#fdecec', fg: '#c0392b' };
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return { label: 'XLS', bg: '#e7f4ec', fg: '#1e7e45' };
+  if (['doc', 'docx'].includes(ext)) return { label: 'DOC', bg: '#e8effb', fg: '#1a5cc0' };
+  if (['ppt', 'pptx'].includes(ext)) return { label: 'PPT', bg: '#fdeee4', fg: '#c75b1e' };
+  if (['zip', 'rar', '7z'].includes(ext)) return { label: 'ZIP', bg: '#f0eef9', fg: '#6b4fb0' };
+  return { label: (ext || 'FILE').slice(0, 4).toUpperCase(), bg: '#eef0f2', fg: '#41454d' };
+}
+function fmtSize(bytes: number | null | undefined): string {
+  if (!bytes) return '—';
+  const MB = 1024 * 1024;
+  return bytes >= MB ? `${(bytes / MB).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 function triggerUpload() { fileInput.value?.click(); }
 async function onFilesPicked(e: Event) {
@@ -198,7 +328,58 @@ function onAssetUpdated(patch: Partial<MediaAssetItem>) {
 function onAssetArchived(id: string) {
   items.value = items.value.filter((x) => x.id !== id);
   selected.value = null;
-  toast.success('Đã xóa khỏi kho');
+  toast.success('Đã chuyển vào Thùng rác');
+}
+
+// ── GĐ13a: Thùng rác ────────────────────────────────────────────────────────
+const trashMode = ref(false);
+const trashItems = ref<TrashItem[]>([]);
+const trashLoading = ref(false);
+
+async function loadTrash() {
+  trashLoading.value = true;
+  try {
+    const kind = activeKind.value === 'album' ? undefined : activeKind.value;
+    const res = await listTrash({ kind });
+    trashItems.value = res.items;
+  } catch (e: any) {
+    toast.warning(e?.response?.data?.error || 'Không tải được thùng rác');
+  } finally {
+    trashLoading.value = false;
+  }
+}
+function openTrash() { trashMode.value = true; selected.value = null; loadTrash(); }
+function closeTrash() { trashMode.value = false; reload(); }
+
+async function onRestore(a: TrashItem) {
+  try {
+    await restoreMedia(a.id);
+    trashItems.value = trashItems.value.filter((x) => x.id !== a.id);
+    toast.success(`Đã khôi phục "${a.name}" về kho`);
+  } catch (e: any) {
+    toast.warning(e?.response?.data?.error || 'Khôi phục thất bại');
+  }
+}
+async function onPermanentDelete(a: TrashItem) {
+  if (!window.confirm(`Xóa vĩnh viễn "${a.name}"? Sẽ KHÔNG khôi phục được nữa.\n(Lịch sử chat đã gửi không bị ảnh hưởng.)`)) return;
+  try {
+    await permanentDeleteMedia(a.id);
+    trashItems.value = trashItems.value.filter((x) => x.id !== a.id);
+    toast.success('Đã xóa vĩnh viễn khỏi kho');
+  } catch (e: any) {
+    toast.warning(e?.response?.data?.error || 'Xóa vĩnh viễn thất bại');
+  }
+}
+async function onEmptyTrash() {
+  if (trashItems.value.length === 0) return;
+  if (!window.confirm(`Dọn sạch Thùng rác (${trashItems.value.length} mục)? Sẽ KHÔNG khôi phục được.\n(Lịch sử chat đã gửi không bị ảnh hưởng.)`)) return;
+  try {
+    const res = await emptyTrash();
+    toast.success(`Đã dọn ${res.deleted} mục${res.hasMore ? ' (còn nữa, bấm lại để dọn tiếp)' : ''}`);
+    loadTrash();
+  } catch (e: any) {
+    toast.warning(e?.response?.data?.error || 'Dọn thùng rác thất bại');
+  }
 }
 
 const stats = ref<{ totalAssets: number; totalUsage: number; topUsed: Array<{ id: string; name: string; kind: string; usageCount: number; thumbnailUrl: string | null }> } | null>(null);
@@ -233,6 +414,13 @@ onMounted(() => { reload(); loadFolders(); loadStats(); });
 .vis-toggle { margin-left:auto; display:inline-flex; border:1px solid var(--hairline); border-radius:var(--pill); overflow:hidden; font-size:12.5px; }
 .vis-toggle span { padding:5px 13px; cursor:pointer; color:var(--muted); }
 .vis-toggle span.on { background:var(--ink); color:#fff; }
+.lvl2-btn { border:1px solid var(--hairline); background:var(--canvas); border-radius:var(--pill); padding:5px 12px; font-size:12.5px; cursor:pointer; color:var(--muted); }
+.lvl2-btn.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+.m-lever2 { display:flex; gap:8px; align-items:center; padding:10px 24px; border-bottom:1px solid var(--hairline); flex-wrap:wrap; background:var(--soft); }
+.lv2-sel { border:1px solid var(--hairline); border-radius:var(--r-sm,6px); padding:5px 10px; font-size:12.5px; color:var(--ink); background:var(--canvas); outline:none; }
+.lv2-tag { border:1px solid var(--hairline); border-radius:var(--r-sm,6px); padding:5px 11px; font-size:12.5px; width:150px; outline:none; }
+.thumb .play-ic { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:34px; height:34px; border-radius:9999px; background:rgba(0,0,0,.5); color:#fff; font-size:14px; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.thumb .dur { position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,.7); color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-variant-numeric:tabular-nums; }
 .m-work { display:flex; flex:1; overflow:hidden; min-height:0; }
 .m-tree { width:180px; border-right:1px solid var(--hairline); padding:14px 12px; flex-shrink:0; overflow:auto; }
 .tree-ttl { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:8px; font-weight:500; display:flex; justify-content:space-between; align-items:center; }
@@ -242,6 +430,16 @@ onMounted(() => { reload(); loadFolders(); loadStats(); });
 .f .lk { margin-left:auto; font-size:11px; }
 .m-grid-wrap { flex:1; padding:16px 24px; overflow:auto; min-width:0; }
 .m-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px; }
+/* TỆP — list detail theo dòng (anh chốt: grid card không phân biệt được tệp nào). */
+.m-flist { display:flex; flex-direction:column; border:1px solid var(--hairline); border-radius:var(--r-md); overflow:hidden; background:var(--canvas); }
+.frow { display:flex; align-items:center; gap:13px; padding:11px 14px; border-bottom:1px solid var(--hairline); cursor:pointer; }
+.frow:last-child { border-bottom:none; }
+.frow:hover { background:var(--soft); }
+.frow.sel { background:#eef2fb; }
+.ficon { width:46px; height:46px; flex-shrink:0; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; letter-spacing:.02em; }
+.finfo { flex:1; min-width:0; }
+.fname { font-size:14px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px; }
+.fmeta { font-size:12px; color:var(--muted); }
 .card { border:1px solid var(--hairline); border-radius:var(--r-md); overflow:hidden; cursor:pointer; background:var(--canvas); }
 .card.sel { border-color:var(--ink); box-shadow:0 0 0 2px var(--ink); }
 .thumb { height:108px; background:var(--strong); position:relative; display:flex; align-items:center; justify-content:center; }
@@ -269,4 +467,24 @@ onMounted(() => { reload(); loadFolders(); loadStats(); });
 .ms-item img { width:100%; height:100%; object-fit:cover; }
 .ms-item .ms-ph { display:flex; align-items:center; justify-content:center; height:100%; font-size:20px; background:var(--strong); }
 .ms-badge { position:absolute; bottom:2px; right:2px; background:var(--ink); color:#fff; border-radius:9999px; padding:1px 6px; font-size:10px; font-weight:500; }
+
+/* ── GĐ13a: Thùng rác ── */
+.btn-trash { display:inline-flex; align-items:center; gap:6px; background:#fff; color:var(--muted); border:1px solid var(--hairline); border-radius:var(--r-md); padding:7px 13px; font-size:13px; font-weight:500; cursor:pointer; }
+.btn-trash:hover { border-color:#1786be; color:#1786be; }
+.btn-trash.on { background:#1786be; border-color:#1786be; color:#fff; }
+.m-trash { flex:1; display:flex; flex-direction:column; padding:14px 24px; overflow:auto; min-height:0; }
+.trash-bar { display:flex; align-items:center; gap:12px; padding:9px 13px; background:#fff8ec; border:1px solid #ffe3b3; border-radius:var(--r-md); margin-bottom:14px; }
+.trash-ttl { display:inline-flex; align-items:center; gap:6px; font-size:13.5px; font-weight:700; color:#92400e; flex-shrink:0; }
+.trash-note { font-size:11.5px; color:#7a5a1e; flex:1; line-height:1.4; }
+.trash-empty { background:#fff; border:1px solid #e0a93f; color:#92400e; border-radius:var(--r-sm); padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0; }
+.trash-empty:disabled { opacity:.45; cursor:default; }
+.trash-close { background:none; border:none; cursor:pointer; color:#92400e; display:inline-flex; padding:3px; flex-shrink:0; }
+.trash-card { cursor:default; }
+.purge-badge { position:absolute; top:5px; left:5px; background:rgba(20,26,36,.72); color:#fff; font-size:10px; font-weight:600; border-radius:5px; padding:1px 6px; }
+.purge-badge.soon { background:#c0392b; }
+.trash-acts { display:flex; gap:5px; margin-top:4px; }
+.t-restore { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; background:#e4f1f8; color:#1786be; border:1px solid #cfe6f3; border-radius:var(--r-sm); padding:5px 8px; font-size:11.5px; font-weight:600; cursor:pointer; }
+.t-restore:hover { background:#1786be; color:#fff; border-color:#1786be; }
+.t-perm { background:#fff; color:#c0392b; border:1px solid #f0c8c2; border-radius:var(--r-sm); padding:5px 9px; cursor:pointer; display:inline-flex; align-items:center; }
+.t-perm:hover { background:#c0392b; color:#fff; border-color:#c0392b; }
 </style>

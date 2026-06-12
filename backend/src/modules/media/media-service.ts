@@ -18,11 +18,13 @@
  */
 import sharp from 'sharp';
 import { imageSize } from 'image-size';
-import { readFile } from 'node:fs/promises';
-import { resolve as resolvePath } from 'node:path';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { resolve as resolvePath, join as joinPath } from 'node:path';
+import { tmpdir } from 'node:os';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { uploadBuffer } from '../../shared/storage/minio-client.js';
 import { candidateDownloadUrls } from '../chat/chat-media-helpers.js';
+import { generateThumbnail, probeVideoFile } from '../../shared/video-processor.js';
 import { logger } from '../../shared/utils/logger.js';
 import type { MediaAsset, MediaBlob } from '@prisma/client';
 
@@ -118,6 +120,47 @@ export async function compressImage(
  *   2. DB: upsert MediaBlob theo [orgId,contentHash]; nếu trùng → đọc lại,
  *      tăng usageCount của asset đang trỏ tới (KHÔNG tạo asset mới).
  */
+/**
+ * Sinh thumbnail + metadata (duration/width/height) cho VIDEO upload vào kho (ffmpeg).
+ * Trả thumbnailUrl (đã mirror lên MinIO) + durationSec/width/height. Lỗi ffmpeg → trả rỗng
+ * (không chặn upload — video vẫn lưu, chỉ thiếu ảnh đại diện). KHÔNG throw.
+ */
+async function extractVideoMeta(buffer: Buffer): Promise<{
+  thumbnailUrl: string | null; durationSec: number | null; width: number | null; height: number | null;
+}> {
+  const empty = { thumbnailUrl: null, durationSec: null, width: null, height: null };
+  let dir: string | null = null;
+  try {
+    dir = await mkdtemp(joinPath(tmpdir(), 'zalocrm-media-vid-'));
+    const vidPath = joinPath(dir, 'video.mp4');
+    await writeFile(vidPath, buffer);
+    // Probe metadata (ffprobe) — không chặn nếu lỗi.
+    const meta = await probeVideoFile(vidPath).catch(() => ({} as any));
+    // Thumbnail (ffmpeg) → mirror lên MinIO.
+    let thumbnailUrl: string | null = null;
+    try {
+      const gen = await generateThumbnail(vidPath);
+      const thumbBuf = await readFile(gen.path);
+      const up = await uploadBuffer(thumbBuf, 'image/jpeg', 'video-thumb.jpg');
+      thumbnailUrl = up.url;
+      await gen.cleanup().catch(() => {});
+    } catch (e) {
+      logger.warn('[media] extractVideoMeta thumbnail failed:', (e as Error)?.message ?? e);
+    }
+    return {
+      thumbnailUrl,
+      durationSec: meta.durationMs ? Math.round(meta.durationMs / 1000) : null,
+      width: meta.width ?? null,
+      height: meta.height ?? null,
+    };
+  } catch (e) {
+    logger.warn('[media] extractVideoMeta failed:', (e as Error)?.message ?? e);
+    return empty;
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function registerAsset(input: RegisterAssetInput): Promise<RegisterAssetResult> {
   const {
     orgId,
@@ -137,6 +180,11 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
     ? await compressImage(input.buffer, mimeType)
     : { buffer: input.buffer, mimeType, width: undefined, height: undefined, compressed: false };
 
+  // 1b. VIDEO: sinh thumbnail + metadata (ffmpeg) để kho hiển thị đẹp (anh chốt 2026-06-12).
+  const videoMeta = kind === 'video'
+    ? await extractVideoMeta(input.buffer)
+    : { thumbnailUrl: null, durationSec: null, width: null, height: null };
+
   const originalFilename = input.originalFilename ?? null;
   const name = input.name ?? originalFilename ?? 'Media';
 
@@ -151,11 +199,59 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
   if (existingBlob) {
     // S8 observability: log dedup-hit (đo tiết kiệm thật — bao nhiêu ô lưu trữ né được).
     logger.info(`[media][dedup] hit org=${orgId} hash=${up.contentHash.slice(0, 12)} reusedAsset=${existingBlob.assetId} source=${source}`);
-    // Tăng lượt dùng asset đang sở hữu blob này (catalog vẫn cập nhật khi dedup-hit).
+    // FIX 2026-06-12 (anh báo file .doc/.xlsx lưu cũ kẹt tên "Lưu từ chat"): khi dedup-hit,
+    // asset cũ có thể được lưu TỪ TRƯỚC lúc code chưa biết đọc tên thật → name placeholder +
+    // originalFilename=null. Nếu lần lưu này CÓ tên thật tốt hơn (có đuôi) → VÁ tên + đuôi cho
+    // asset cũ để hết kẹt "Lưu từ chat" và gửi đi không ra file .bin. Chỉ vá khi tên cũ là
+    // placeholder/thiếu đuôi VÀ tên mới có đuôi (tránh ghi đè tên do người dùng tự đặt).
+    const old = existingBlob.asset;
+    const PLACEHOLDER = /^(Lưu từ chat|Tệp lưu từ chat|Media)$/;
+    const oldHasExt = !!old?.name && /\.[A-Za-z0-9]{2,5}$/.test(old.name);
+    const newHasExt = !!input.name && /\.[A-Za-z0-9]{2,5}$/.test(input.name);
+    const shouldPatchName =
+      !!input.name && newHasExt &&
+      (!old?.originalFilename || (!oldHasExt && (PLACEHOLDER.test(old?.name ?? '') || old?.name === input.originalFilename)));
+    // FIX 2026-06-12 (anh báo file 27.2MB là video Blue Fun...Post-2.mp4 lọt tab Tệp): Zalo gửi
+    // 1 SỐ video dưới content_type='file' (người gửi đính kèm như file, không phải video native)
+    // → asset cũ kẹt kind='file' nằm sai tab Tệp. Nếu lần lưu này nhận diện ĐÚNG là video (đuôi
+    // .mp4/.mov/... ở media-routes nâng kind='video') VÀ asset cũ đang là 'file' → VÁ kind sang
+    // 'video' + gắn thumbnail/metadata (videoMeta đã sinh ở trên vì kind='video'). Chỉ nâng
+    // file→video (không hạ cấp), tránh đụng asset đã phân loại đúng.
+    const shouldPatchKind = kind === 'video' && old?.kind === 'file';
+    // GĐ13a D5 (2026-06-12): nếu asset cũ ĐANG trong thùng rác (archivedAt != null) mà sale
+    // lưu LẠI đúng file đó → TỰ KHÔI PHỤC về kho (clear archivedAt + trashedById). Tránh
+    // dedup đụng bản ẩn khiến sale "lưu rồi mà kho không hiện".
+    const shouldRestore = !!old?.archivedAt;
     const asset = await prisma.mediaAsset.update({
       where: { id: existingBlob.assetId },
-      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+      data: {
+        usageCount: { increment: 1 },
+        lastUsedAt: new Date(),
+        ...(shouldPatchName ? { name: input.name, originalFilename: input.originalFilename ?? input.name } : {}),
+        ...(shouldPatchKind
+          ? { kind: 'video', ...(videoMeta.thumbnailUrl ? { thumbnailUrl: videoMeta.thumbnailUrl } : {}) }
+          : {}),
+        ...(shouldRestore ? { archivedAt: null, trashedById: null } : {}),
+      },
     });
+    if (shouldRestore) {
+      logger.info(`[media][dedup] auto-restore asset=${existingBlob.assetId} (lưu lại đồ đang trong thùng rác → về kho)`);
+    }
+    if (shouldPatchKind) {
+      // Vá luôn metadata video trên blob đã tồn tại (duration/width/height) để player hiển thị đúng.
+      await prisma.mediaBlob.update({
+        where: { id: existingBlob.id },
+        data: {
+          ...(videoMeta.durationSec != null ? { durationSec: videoMeta.durationSec } : {}),
+          ...(videoMeta.width != null ? { width: videoMeta.width } : {}),
+          ...(videoMeta.height != null ? { height: videoMeta.height } : {}),
+        },
+      }).catch((e) => logger.warn(`[media][dedup] vá metadata blob video lỗi: ${(e as Error)?.message}`));
+      logger.info(`[media][dedup] vá kind asset=${existingBlob.assetId} file → video (${old?.name})`);
+    }
+    if (shouldPatchName) {
+      logger.info(`[media][dedup] vá tên asset=${existingBlob.assetId} "${old?.name}" → "${input.name}"`);
+    }
     return { asset, blob: existingBlob, deduped: true };
   }
   // S8: log MISS (bytes mới hoàn toàn) — để tính hit-rate = hit/(hit+miss).
@@ -177,6 +273,8 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
           folderId,
           tagIds,
           originalFilename,
+          // VIDEO: ảnh đại diện (ffmpeg) để kho không hiện <img> vỡ.
+          thumbnailUrl: videoMeta.thumbnailUrl,
         },
       });
       const blob = await tx.mediaBlob.create({
@@ -189,8 +287,9 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
           publicUrl: up.url,
           mimeType: up.mimeType,
           sizeBytes: up.size,
-          width: processed.width ?? null,
-          height: processed.height ?? null,
+          width: processed.width ?? videoMeta.width ?? null,
+          height: processed.height ?? videoMeta.height ?? null,
+          durationSec: videoMeta.durationSec,
         },
       });
       return { asset, blob };

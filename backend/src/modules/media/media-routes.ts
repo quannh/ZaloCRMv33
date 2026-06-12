@@ -22,6 +22,9 @@ import { registerAsset, bumpUsage, resolveSavedVisibility, generateWatermarkVari
 import { downloadMediaToTemp } from '../chat/chat-media-helpers.js';
 import { createMediaMessage, getUserFullName } from '../chat/chat-helpers.js';
 import { emitChatMessage } from '../../shared/realtime/emit-chat.js';
+import { generateThumbnail, sendNativeVideo } from '../../shared/video-processor.js';
+import { uploadBuffer } from '../../shared/storage/minio-client.js';
+import { readFile } from 'node:fs/promises';
 import { logger } from '../../shared/utils/logger.js';
 
 const ALLOWED_IMAGE = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -42,11 +45,68 @@ const IMAGE_MAX = 15 * 1024 * 1024;
 const VIDEO_MAX = 500 * 1024 * 1024;
 const FILE_MAX = 1024 * 1024 * 1024;
 
+// GĐ13a Thùng rác Media (2026-06-12): giữ trong thùng rác 30 ngày rồi cron tự dọn (xóa hàng DB,
+// KHÔNG đụng byte MinIO). TRASH_EMPTY_BATCH: dọn-sạch-thủ-công xóa tối đa N/lần tránh khóa DB lâu.
+export const TRASH_RETENTION_DAYS = 30;
+const TRASH_EMPTY_BATCH = 500;
+
 function classify(mime: string): MediaKind | null {
   if (ALLOWED_IMAGE.includes(mime)) return 'image';
   if (ALLOWED_VIDEO.includes(mime)) return 'video';
   if (ALLOWED_FILE.includes(mime)) return 'file';
   return null;
+}
+
+// Nhận diện loại media THẬT theo ĐUÔI file (anh chốt 2026-06-12). Zalo nhiều khi gửi
+// video/ảnh dưới dạng ĐÍNH KÈM FILE (contentType='file') → mặc định lưu thành kind='file'
+// → video lọt tab Tệp, gửi đi mất player. Đuôi cho biết thật sự là gì → nâng cấp kind.
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp']);
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic']);
+function kindFromExt(ext: string): MediaKind | null {
+  const e = ext.replace(/^\./, '').toLowerCase();
+  if (VIDEO_EXTS.has(e)) return 'video';
+  if (IMAGE_EXTS.has(e)) return 'image';
+  return null;
+}
+
+// mime → đuôi (chỉ các loại tệp được phép). Dùng để vá file cũ lưu trước khi có tên thật
+// (mime octet-stream) hoặc tên không có đuôi → suy đuôi để Zalo bên nhận mở được.
+const MIME_EXT: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'text/csv': '.csv',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+};
+
+/**
+ * Tên file (kèm ĐUÔI) để gửi cho khách. zca-js lấy tên + đuôi mà khách NHÌN THẤY từ
+ * basename của đường dẫn temp (path.basename + path.extname). Thiếu đuôi → Zalo hiển thị
+ * "file lỗi/không mở được". Ưu tiên: original_filename → name. Nếu vẫn thiếu đuôi → suy
+ * đuôi từ url-basename rồi từ mime. File cũ ("Lưu từ chat", mime octet-stream) → .bin
+ * cuối cùng để ít nhất có đuôi (khách đổi tên mở được) thay vì file lỗi hoàn toàn.
+ */
+function buildSendFileName(
+  asset: { name: string; originalFilename?: string | null },
+  blob: { mimeType: string; publicUrl: string },
+): string {
+  const base = (asset.originalFilename || asset.name || 'tep').replace(/[\\/]+/g, '_').trim();
+  const hasExt = /\.[A-Za-z0-9]{2,5}$/.test(base);
+  if (hasExt) return base;
+  // suy đuôi từ url-basename (vd .../<hash>.pdf)
+  let ext = '';
+  try {
+    const urlName = decodeURIComponent(new URL(blob.publicUrl).pathname.split('/').pop() || '');
+    const m = urlName.match(/\.[A-Za-z0-9]{2,5}$/);
+    if (m) ext = m[0];
+  } catch { /* ignore */ }
+  if (!ext) ext = MIME_EXT[blob.mimeType] || '.bin';
+  return base + ext;
 }
 
 /**
@@ -97,19 +157,65 @@ async function saveOneMessageToMedia(args: {
   if (!url) return { messageId, status: 'skipped', reason: 'Tin này không có media để lưu' };
 
   const ct = message.contentType;
-  const kind: MediaKind = ct === 'image' ? 'image' : ct === 'video' ? 'video' : 'file';
+  let kind: MediaKind = ct === 'image' ? 'image' : ct === 'video' ? 'video' : 'file';
+
+  // FIX 2026-06-12 (anh báo: tệp toàn "Lưu từ chat" → sale không phân biệt được).
+  // Zalo lưu TÊN FILE THẬT (kèm đuôi) ở content.title, KHÔNG phải content.name. Đọc theo thứ
+  // tự title → fileName → name → fileUrl-basename. Ảnh thì không có title → giữ "Lưu từ chat".
+  const urlBase = (() => { try { return decodeURIComponent(String(url).split('/').pop() || ''); } catch { return ''; } })();
+  // FIX 2026-06-12 (anh báo file .doc/.xlsx lỗi): Zalo còn để ĐUÔI CHUẨN ở
+  // content.params.fileExt ("doc"/"xlsx"...). params là STRING json lồng → parse lần 2.
+  // Đây là nguồn đuôi đáng tin nhất; dùng để VÁ đuôi khi title thiếu đuôi.
+  const fileExt: string = (() => {
+    try {
+      const p = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : parsed.params;
+      const e = String(p?.fileExt || '').replace(/^\./, '').toLowerCase().trim();
+      return /^[a-z0-9]{1,5}$/.test(e) ? e : '';
+    } catch { return ''; }
+  })();
+  let realName: string | undefined =
+    parsed.title || parsed.fileName || parsed.name
+    || (kind !== 'image' && urlBase && /\.[A-Za-z0-9]{2,5}$/.test(urlBase) ? urlBase : undefined);
+  // Nếu có tên nhưng THIẾU đuôi mà Zalo báo fileExt → ghép đuôi (vd "Hợp đồng" + ".doc").
+  if (realName && fileExt && !/\.[A-Za-z0-9]{2,5}$/.test(realName)) {
+    realName = `${realName}.${fileExt}`;
+  }
+
+  // FIX 2026-06-12 (anh báo video .mp4 lọt tab Tệp): Zalo gửi video dưới dạng ĐÍNH KÈM file
+  // (contentType='file') → kind='file' → vào tab Tệp, gửi đi mất player. Đuôi (fileExt hoặc
+  // đuôi của realName) cho biết THẬT là video → nâng kind='file'→'video' để vào tab Video,
+  // có thumbnail, gửi đi NATIVE. Chỉ NÂNG file→video (anh chốt); ảnh Zalo gửi đúng kind sẵn.
+  if (kind === 'file') {
+    const extForKind = fileExt || (realName?.match(/\.([A-Za-z0-9]{2,5})$/)?.[1] ?? '');
+    if (kindFromExt(extForKind) === 'video') {
+      kind = 'video';
+      logger.info(`[media][audit] nhận diện video từ đuôi .${extForKind} (Zalo gửi dạng file) msg=${messageId}`);
+    }
+  }
+  const mediaName = realName || (kind === 'image' ? 'Lưu từ chat' : kind === 'video' ? 'Video lưu từ chat' : 'Tệp lưu từ chat');
+
+  // Validation file (audit 2026-06-12): save-from-chat KHÔNG qua classify() như /upload.
+  // Chặn đuôi nguy hiểm (thực thi) để file độc không vào kho rồi gửi lại khách. KHÔNG dùng
+  // whitelist cứng vì file Zalo nhiều khi mime=octet-stream hợp lệ (pdf/excel) sẽ bị chặn nhầm.
+  if (kind === 'file') {
+    const fname = String(mediaName || url || '').toLowerCase();
+    const DANGEROUS = ['.exe', '.bat', '.cmd', '.scr', '.com', '.pif', '.msi', '.js', '.jar', '.vbs', '.ps1', '.sh'];
+    if (DANGEROUS.some((ext) => fname.endsWith(ext))) {
+      logger.warn(`[media][audit] chặn lưu file nguy hiểm user=${userId} name=${fname}`);
+      return { messageId, status: 'blocked', reason: 'Loại tệp này không được phép lưu vào kho (bảo mật).' };
+    }
+  }
 
   let tmp: { path: string; cleanup: () => Promise<void> } | null = null;
   try {
-    tmp = await downloadMediaToTemp({ url, filename: parsed.name }, ct);
-    const { readFile } = await import('node:fs/promises');
+    tmp = await downloadMediaToTemp({ url, filename: realName }, ct);
     const buf = await readFile(tmp.path);
     const mimeType = parsed.mime
       || (kind === 'image' ? 'image/jpeg' : kind === 'video' ? 'video/mp4' : 'application/octet-stream');
     const res = await registerAsset({
       orgId, buffer: buf, mimeType, kind,
-      name: parsed.name || `Lưu từ chat`,
-      originalFilename: parsed.name,
+      name: mediaName,
+      originalFilename: realName,
       ownerUserId: userId, createdById: userId,
       visibility: vis.visibility,
       source: 'saved_from_chat',
@@ -143,6 +249,10 @@ export async function mediaRoutes(app: FastifyInstance) {
       const q = request.query as {
         kind?: string; tag?: string; folderId?: string;
         visibility?: string; q?: string; limit?: string;
+        // Lever 2 (anh chốt 2026-06-12): lọc sâu.
+        since?: string;        // '7d' | '30d' | '90d' — tải lên/dùng trong N ngày
+        sizeMin?: string; sizeMax?: string; // byte
+        sort?: string;         // 'recent' (mặc định, theo lastUsedAt) | 'newest' (createdAt) | 'most_used' | 'name'
       };
 
       // view_all → xem cả org; thường → chỉ asset của mình HOẶC public.
@@ -161,11 +271,33 @@ export async function mediaRoutes(app: FastifyInstance) {
       if (q.folderId) where.folderId = q.folderId;
       if (q.tag) where.tagIds = { has: q.tag };
       if (q.q) where.name = { contains: q.q, mode: 'insensitive' };
+      // Thời gian: tải lên trong N ngày (createdAt).
+      if (q.since) {
+        const days = { '7d': 7, '30d': 30, '90d': 90 }[q.since];
+        if (days) where.createdAt = { gte: new Date(Date.now() - days * 86400_000) };
+      }
+      // Size: lọc theo sizeBytes của blob 'original'.
+      const sizeMin = q.sizeMin ? parseInt(q.sizeMin, 10) : null;
+      const sizeMax = q.sizeMax ? parseInt(q.sizeMax, 10) : null;
+      if (sizeMin || sizeMax) {
+        where.blobs = { some: { variantType: 'original',
+          ...(sizeMin ? { sizeBytes: { gte: sizeMin } } : {}),
+          ...(sizeMax ? { sizeBytes: { lte: sizeMax } } : {}),
+        } };
+      }
+
+      // Sắp xếp (Lever 2): recent (lastUsed) | newest (createdAt) | most_used | name.
+      const orderBy: any = {
+        recent: [{ lastUsedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+        newest: [{ createdAt: 'desc' }],
+        most_used: [{ usageCount: 'desc' }, { createdAt: 'desc' }],
+        name: [{ name: 'asc' }],
+      }[q.sort ?? 'recent'] ?? [{ lastUsedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }];
 
       const limit = Math.min(parseInt(q.limit ?? '60', 10) || 60, 200);
       const assets = await prisma.mediaAsset.findMany({
         where,
-        orderBy: [{ lastUsedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+        orderBy,
         take: limit,
         include: { blobs: { where: { variantType: { in: ['original', 'watermarked'] } } } },
       });
@@ -194,8 +326,11 @@ export async function mediaRoutes(app: FastifyInstance) {
           tagIds: a.tagIds,
           usageCount: a.usageCount,
           url: blob?.publicUrl ?? null,
-          thumbnailUrl: a.thumbnailUrl ?? blob?.publicUrl ?? null,
+          // VIDEO/FILE KHÔNG fallback thumbnail = URL gốc (mp4/pdf) → tránh <img> vỡ.
+          // Chỉ ẢNH mới dùng blob.publicUrl làm thumbnail. Video dùng thumbnailUrl thật (ffmpeg).
+          thumbnailUrl: a.thumbnailUrl ?? (a.kind === 'image' ? blob?.publicUrl ?? null : null),
           sizeBytes: blob?.sizeBytes ?? null,
+          durationSec: blob?.durationSec ?? null,
           createdAt: a.createdAt,
           // Watermark per-ảnh (GĐ2).
           watermarkEnabled: a.watermarkEnabled,
@@ -387,9 +522,12 @@ export async function mediaRoutes(app: FastifyInstance) {
       // (GĐ3 sẽ tối ưu forward/cache per-nick — chưa làm ở GĐ1.)
       let tmp: { path: string; cleanup: () => Promise<void> } | null = null;
       try {
-        // KHÔNG truyền filename=asset.name (name "Lưu từ chat" KHÔNG có đuôi → temp mất
-        // đuôi → Zalo coi ảnh thành FILE). Để downloadMediaToTemp lấy tên từ URL (media/{hash}.webp).
-        tmp = await downloadMediaToTemp({ url: blob.publicUrl }, asset.kind);
+        // ẢNH/VIDEO: KHÔNG truyền filename (name "Lưu từ chat" không đuôi → temp mất đuôi →
+        // Zalo coi ảnh thành FILE). Để downloadMediaToTemp lấy đuôi .webp/.mp4 từ URL.
+        // FILE (pdf/excel/doc): BẮT BUỘC truyền tên thật + đuôi — zca-js lấy tên+đuôi khách
+        // nhìn thấy từ basename temp; thiếu đuôi → "file lỗi". (anh báo 2026-06-12.)
+        const sendName = asset.kind === 'file' ? buildSendFileName(asset, blob) : undefined;
+        tmp = await downloadMediaToTemp({ url: blob.publicUrl, filename: sendName }, asset.kind);
         zaloRateLimiter.recordSend(conversation.zaloAccountId);
 
         // Guard nick connected ở trên. Gửi qua zaloOps (check status + reconnect).
@@ -402,15 +540,44 @@ export async function mediaRoutes(app: FastifyInstance) {
           );
           zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
           content = JSON.stringify({ href: blob.publicUrl, thumb: blob.publicUrl, size: blob.sizeBytes });
+        } else if (asset.kind === 'video') {
+          // VIDEO: gửi NATIVE (player + thumbnail + duration) như chat thường — KHÔNG sendFile
+          // (sendFile làm video thành "file .mp4 tải về", mất player). Sinh thumbnail bằng ffmpeg,
+          // mirror lên MinIO để lưu vào content. Native lỗi → fallback sendFile (vẫn gửi được).
+          // (anh chốt 2026-06-12: video gửi từ kho phải đẹp như chat.)
+          let thumbUrl: string = asset.thumbnailUrl ?? blob.publicUrl;
+          let thumbPath: string | undefined;
+          try {
+            const gen = await generateThumbnail(tmp.path);
+            thumbPath = gen.path;
+            const thumbBuf = await readFile(gen.path);
+            const up = await uploadBuffer(thumbBuf, 'image/jpeg', `${asset.name || 'video'}-thumb.jpg`);
+            thumbUrl = up.url;
+          } catch (e) {
+            logger.warn('[media] video thumbnail gen failed (gửi từ kho):', (e as Error)?.message ?? e);
+          }
+          try {
+            if (!instance?.api) throw new Error('nick api null');
+            const sendResult: any = await sendNativeVideo({
+              api: instance.api as any, videoPath: tmp.path, thumbnailPath: thumbPath,
+              threadId, threadType: threadType as 0 | 1, message: caption,
+            });
+            zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
+          } catch (e) {
+            logger.warn('[media] sendNativeVideo lỗi → fallback sendFile:', (e as Error)?.message ?? e);
+            const sendResult: any = await zaloOps.sendFile(
+              conversation.zaloAccountId, threadId, threadType as 0 | 1, [tmp.path], io, caption,
+            );
+            zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
+          }
+          content = JSON.stringify({ href: blob.publicUrl, thumb: thumbUrl, thumbUrl, thumbnail: thumbUrl, size: blob.sizeBytes });
         } else {
-          // VIDEO/FILE: gửi qua sendFile (zca-js đọc local path → đính kèm file/video).
+          // FILE (pdf/excel/doc/zip): sendFile (zca-js đọc local path → đính kèm file).
           const sendResult: any = await zaloOps.sendFile(
             conversation.zaloAccountId, threadId, threadType as 0 | 1, [tmp.path], io, caption,
           );
           zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
-          content = asset.kind === 'video'
-            ? JSON.stringify({ href: blob.publicUrl, thumb: asset.thumbnailUrl ?? blob.publicUrl, size: blob.sizeBytes })
-            : JSON.stringify({ href: blob.publicUrl, name: asset.name, size: blob.sizeBytes, mime: blob.mimeType });
+          content = JSON.stringify({ href: blob.publicUrl, name: asset.name, size: blob.sizeBytes, mime: blob.mimeType });
         }
 
         const msg = await createMediaMessage({
@@ -506,9 +673,9 @@ export async function mediaRoutes(app: FastifyInstance) {
     },
   );
 
-  // ── DELETE /api/v1/media/:id — archive (xóa MỀM, giữ object MinIO) ─────────
-  // archive: grant 'edit' đủ (sale archive ảnh CỦA MÌNH). Xóa của người khác cần
-  // view_all (admin/marketing). delete grant không bắt buộc — archive ≠ hard delete.
+  // ── DELETE /api/v1/media/:id — vào THÙNG RÁC (xóa MỀM, giữ object MinIO) ────
+  // GĐ13a (2026-06-12): archivedAt = dấu thùng rác. grant 'edit' đủ (sale xóa ảnh CỦA MÌNH).
+  // Xóa của người khác cần view_all (admin). Ghi trashedById để audit + scope khôi phục.
   app.delete(
     '/api/v1/media/:id',
     { preHandler: requireGrant('media', 'edit') },
@@ -521,9 +688,121 @@ export async function mediaRoutes(app: FastifyInstance) {
         where: { id, orgId: user.orgId, archivedAt: null, ...(canViewAll ? {} : { ownerUserId: userId }) },
       });
       if (!asset) return reply.status(404).send({ error: 'Không tìm thấy media' });
-      // INVARIANT: archive thôi, KHÔNG xóa object MinIO (giữ lịch sử chat cũ trỏ tới).
-      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: new Date() } });
+      // INVARIANT: chỉ vào thùng rác, KHÔNG xóa object MinIO (giữ lịch sử chat cũ trỏ tới).
+      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: new Date(), trashedById: userId } });
+      logger.info(`[media][audit] trash asset=${id} user=${userId}`);
       return { ok: true };
+    },
+  );
+
+  // ── GET /api/v1/media/trash — danh sách asset trong thùng rác ──────────────
+  // GĐ13a: chỉ asset archivedAt != null. Scope owner (sale) / view_all (admin). Có limit+cursor.
+  // Trả thêm archivedAt + trashedById + daysUntilPurge (30 - số ngày đã trong thùng).
+  app.get(
+    '/api/v1/media/trash',
+    { preHandler: requireGrant('media', 'access') },
+    async (request: FastifyRequest) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const q = request.query as { kind?: string; limit?: string; cursor?: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const limit = Math.min(parseInt(q.limit ?? '60', 10) || 60, 200);
+
+      const where: any = {
+        orgId: user.orgId,
+        archivedAt: { not: null },
+        ...(canViewAll ? {} : { ownerUserId: userId }),
+        ...(q.kind ? { kind: q.kind } : {}),
+      };
+      const assets = await prisma.mediaAsset.findMany({
+        where,
+        orderBy: [{ archivedAt: 'desc' }, { id: 'asc' }],
+        take: limit + 1,
+        ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+        include: { blobs: { where: { variantType: 'original' }, take: 1 } },
+      });
+      const hasMore = assets.length > limit;
+      const page = hasMore ? assets.slice(0, limit) : assets;
+      const now = Date.now();
+      const items = page.map((a) => {
+        const archivedMs = a.archivedAt ? a.archivedAt.getTime() : now;
+        const daysInTrash = Math.floor((now - archivedMs) / 86400000);
+        return {
+          id: a.id, kind: a.kind, name: a.name, originalFilename: a.originalFilename,
+          thumbnailUrl: a.thumbnailUrl, visibility: a.visibility, tagIds: a.tagIds,
+          sizeBytes: a.blobs[0]?.sizeBytes ?? null, durationSec: a.blobs[0]?.durationSec ?? null,
+          archivedAt: a.archivedAt, trashedById: a.trashedById,
+          daysUntilPurge: Math.max(0, TRASH_RETENTION_DAYS - daysInTrash),
+        };
+      });
+      return { items, nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null };
+    },
+  );
+
+  // ── POST /api/v1/media/:id/restore — khôi phục từ thùng rác về kho ─────────
+  // GĐ13a: archivedAt về null + clear trashedById. Scope như DELETE (chủ / view_all).
+  app.post(
+    '/api/v1/media/:id/restore',
+    { preHandler: requireGrant('media', 'edit') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const { id } = request.params as { id: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id, orgId: user.orgId, archivedAt: { not: null }, ...(canViewAll ? {} : { ownerUserId: userId }) },
+      });
+      if (!asset) return reply.status(404).send({ error: 'Không tìm thấy media trong thùng rác' });
+      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: null, trashedById: null } });
+      logger.info(`[media][audit] restore asset=${id} user=${userId}`);
+      return { ok: true };
+    },
+  );
+
+  // ── DELETE /api/v1/media/:id/permanent — xóa cứng 1 asset NGAY ─────────────
+  // GĐ13a: cần grant media.delete (mạnh hơn edit). BẮT BUỘC asset đang ở thùng rác
+  // (archivedAt != null) — chặn bypass xóa cứng asset active. KHÔNG đụng byte MinIO.
+  app.delete(
+    '/api/v1/media/:id/permanent',
+    { preHandler: requireGrant('media', 'delete') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const { id } = request.params as { id: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id, orgId: user.orgId, archivedAt: { not: null }, ...(canViewAll ? {} : { ownerUserId: userId }) },
+      });
+      if (!asset) return reply.status(404).send({ error: 'Chỉ xóa vĩnh viễn được media đang trong thùng rác' });
+      // Cascade Prisma: xóa asset → blob + album_item + usage_event tự xóa. KHÔNG xóa byte MinIO.
+      await prisma.mediaAsset.delete({ where: { id } });
+      logger.info(`[media][audit] permanent_delete asset=${id} user=${userId} (DB only, MinIO byte giữ)`);
+      return { ok: true };
+    },
+  );
+
+  // ── DELETE /api/v1/media/trash/empty — dọn sạch thùng rác (DB) ─────────────
+  // GĐ13a: cần grant media.delete. Sale xóa của mình; admin (view_all) xóa cả org.
+  // Batch theo cap để không khóa DB lâu. KHÔNG đụng byte MinIO.
+  app.delete(
+    '/api/v1/media/trash/empty',
+    { preHandler: requireGrant('media', 'delete') },
+    async (request: FastifyRequest) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const where: any = {
+        orgId: user.orgId, archivedAt: { not: null },
+        ...(canViewAll ? {} : { ownerUserId: userId }),
+      };
+      // Lấy id theo cap (deterministic) rồi xóa — tránh deleteMany ôm nghìn hàng 1 phát.
+      const victims = await prisma.mediaAsset.findMany({
+        where, select: { id: true }, orderBy: [{ archivedAt: 'asc' }, { id: 'asc' }], take: TRASH_EMPTY_BATCH,
+      });
+      if (victims.length === 0) return { ok: true, deleted: 0, hasMore: false };
+      await prisma.mediaAsset.deleteMany({ where: { id: { in: victims.map((v) => v.id) } } });
+      logger.info(`[media][audit] empty_trash user=${userId} deleted=${victims.length} (DB only)`);
+      return { ok: true, deleted: victims.length, hasMore: victims.length === TRASH_EMPTY_BATCH };
     },
   );
 

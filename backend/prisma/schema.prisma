@@ -3503,7 +3503,9 @@ model MediaAsset {
   watermarkOpacity    Float     @default(0.65) @map("watermark_opacity")
   usageCount          Int       @default(0) @map("usage_count")
   lastUsedAt          DateTime? @map("last_used_at")
-  archivedAt          DateTime? @map("archived_at") // soft delete — KHÔNG xóa object MinIO
+  archivedAt          DateTime? @map("archived_at") // soft delete = DẤU THÙNG RÁC — KHÔNG xóa object MinIO
+  // GĐ13a (2026-06-12): ai bỏ asset vào thùng rác (audit + scope sale). NULL = chưa từng/đã khôi phục.
+  trashedById         String?   @map("trashed_by_id")
   createdById         String?   @map("created_by_id")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")

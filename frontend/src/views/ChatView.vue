@@ -63,6 +63,7 @@
       class="smax-msg-col"
       @send="sendMessage"
       @ask-ai="generateAiSuggestion"
+      @open-media-tab="onOpenMediaTab"
       @toggle-contact-panel="showContactPanel = !showContactPanel"
       @add-reaction="onAddReaction"
       @remove-reaction="onRemoveReaction"
@@ -92,6 +93,7 @@
     <!-- COL 4: contact info panel (chỉ hiện khi có contact) -->
     <ChatContactPanel
       v-if="showContactPanel && selectedConv?.contact"
+      ref="contactPanelRef"
       :contact-id="selectedConv.contact.id"
       :contact="selectedConv.contact"
       :friendship="selectedConv.friendship ?? null"
@@ -114,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
@@ -478,6 +480,17 @@ async function onSwitchToNickConv(convId: string) {
 // Auto-show panel khi chọn conv có contact
 const showContactPanel = ref(true);
 
+// 2026-06-12 (anh chốt): nút "Chèn từ kho" ở composer cột 3 → mở cột 4 sang tab Media.
+// Panel render bằng v-if nên nếu đang ẩn phải bật + chờ nextTick rồi mới gọi setMainTab.
+const contactPanelRef = ref<{ setMainTab: (t: 'profile' | 'media' | 'ai' | 'followup') => void } | null>(null);
+async function onOpenMediaTab() {
+  if (!showContactPanel.value) {
+    showContactPanel.value = true;
+    await nextTick();
+  }
+  contactPanelRef.value?.setMainTab('media');
+}
+
 // ════════ URL routing: /chat/:convId — deep-link hội thoại ════════
 /** Khi user click 1 conv → push URL /chat/:id (watcher bên dưới sẽ trigger selectConversation) */
 function onSelectConv(convId: string) {
@@ -588,12 +601,17 @@ onMounted(async () => {
       selectConversation(initId);
     }
     window.addEventListener('zalo-labels-synced', onLabelsSynced);
+    // 2026-06-12 — tin mới đến (use-chat bắn 'chat:inbound-message') → refresh badge tab
+    // "Ưu tiên". Cần vì conv tab Ưu tiên không nằm trong list tab đang xem nên socket
+    // không cập nhật được badge tại chỗ. refreshPriorityUnread đã debounce 400ms.
+    window.addEventListener('chat:inbound-message', refreshPriorityUnread);
   }
 });
 onUnmounted(() => {
   if (!isMobile.value) {
     destroySocket();
     window.removeEventListener('zalo-labels-synced', onLabelsSynced);
+    window.removeEventListener('chat:inbound-message', refreshPriorityUnread);
   }
 });
 

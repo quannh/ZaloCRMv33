@@ -14,6 +14,7 @@ export interface MediaAssetItem {
   url: string | null;
   thumbnailUrl: string | null;
   sizeBytes: number | null;
+  durationSec?: number | null;
   createdAt: string;
   // Watermark per-ảnh (GĐ2) — backend trả khi list/detail.
   watermarkEnabled?: boolean;
@@ -32,6 +33,11 @@ export interface ListMediaParams {
   visibility?: string;
   q?: string;
   limit?: number;
+  // Lever 2 (lọc sâu) — anh chốt 2026-06-12.
+  since?: '7d' | '30d' | '90d';
+  sizeMin?: number;
+  sizeMax?: number;
+  sort?: 'recent' | 'newest' | 'most_used' | 'name';
 }
 
 /** Liệt kê kho (scope theo owner + visibility ở backend). */
@@ -100,9 +106,42 @@ export async function updateMedia(
   return data;
 }
 
-/** Archive (xóa mềm) 1 asset khỏi kho. */
+/** Xóa 1 asset khỏi kho → vào THÙNG RÁC (xóa mềm, giữ file gốc). GĐ13a. */
 export async function archiveMedia(id: string): Promise<{ ok: boolean }> {
   const { data } = await api.delete(`/media/${id}`);
+  return data;
+}
+
+// ── GĐ13a: Thùng rác Media ──────────────────────────────────────────────────
+export interface TrashItem extends MediaAssetItem {
+  archivedAt: string;
+  trashedById: string | null;
+  daysUntilPurge: number; // còn N ngày trước khi cron tự dọn khỏi danh sách
+}
+
+/** Danh sách asset trong thùng rác (archivedAt != null) — có phân trang cursor. */
+export async function listTrash(
+  params: { kind?: string; limit?: number; cursor?: string } = {},
+): Promise<{ items: TrashItem[]; nextCursor: string | null }> {
+  const { data } = await api.get('/media/trash', { params });
+  return data;
+}
+
+/** Khôi phục 1 asset từ thùng rác về kho. */
+export async function restoreMedia(id: string): Promise<{ ok: boolean }> {
+  const { data } = await api.post(`/media/${id}/restore`);
+  return data;
+}
+
+/** Xóa vĩnh viễn 1 asset khỏi kho NGAY (chỉ khi đang ở thùng rác). Cần quyền media.delete. */
+export async function permanentDeleteMedia(id: string): Promise<{ ok: boolean }> {
+  const { data } = await api.delete(`/media/${id}/permanent`);
+  return data;
+}
+
+/** Dọn sạch thùng rác (theo batch). Trả số đã xóa + còn nữa không. */
+export async function emptyTrash(): Promise<{ ok: boolean; deleted: number; hasMore: boolean }> {
+  const { data } = await api.delete('/media/trash/empty');
   return data;
 }
 
