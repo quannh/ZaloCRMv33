@@ -121,7 +121,7 @@
 
     <!-- Khung "Xem trước trang đăng nhập" — đổi realtime theo form bên trái -->
     <div class="org-preview-col">
-      <div class="text-subtitle-2 mb-2">Xem trước trang đăng nhập</div>
+      <div class="text-subtitle-2 mb-2">Xem trước giao diện mô phỏng trang đăng nhập với cấu hình hiện tại</div>
       <LoginPreview
         :logo-url="logoUrl"
         :name="orgName || 'HS Holding'"
@@ -129,9 +129,6 @@
         :copyright="copyright"
         :email-placeholder="previewEmailPlaceholder"
       />
-      <p class="text-medium-emphasis text-caption mt-2">
-        Giao diện mô phỏng trang đăng nhập với cấu hình hiện tại.
-      </p>
     </div>
 
     <!-- Media picker — chọn logo từ kho ảnh (GET /api/v1/media?kind=image) -->
