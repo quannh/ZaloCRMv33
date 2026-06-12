@@ -52,6 +52,46 @@ function classify(mime: string): MediaKind | null {
   return null;
 }
 
+// mime → đuôi (chỉ các loại tệp được phép). Dùng để vá file cũ lưu trước khi có tên thật
+// (mime octet-stream) hoặc tên không có đuôi → suy đuôi để Zalo bên nhận mở được.
+const MIME_EXT: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'text/csv': '.csv',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+};
+
+/**
+ * Tên file (kèm ĐUÔI) để gửi cho khách. zca-js lấy tên + đuôi mà khách NHÌN THẤY từ
+ * basename của đường dẫn temp (path.basename + path.extname). Thiếu đuôi → Zalo hiển thị
+ * "file lỗi/không mở được". Ưu tiên: original_filename → name. Nếu vẫn thiếu đuôi → suy
+ * đuôi từ url-basename rồi từ mime. File cũ ("Lưu từ chat", mime octet-stream) → .bin
+ * cuối cùng để ít nhất có đuôi (khách đổi tên mở được) thay vì file lỗi hoàn toàn.
+ */
+function buildSendFileName(
+  asset: { name: string; originalFilename?: string | null },
+  blob: { mimeType: string; publicUrl: string },
+): string {
+  const base = (asset.originalFilename || asset.name || 'tep').replace(/[\\/]+/g, '_').trim();
+  const hasExt = /\.[A-Za-z0-9]{2,5}$/.test(base);
+  if (hasExt) return base;
+  // suy đuôi từ url-basename (vd .../<hash>.pdf)
+  let ext = '';
+  try {
+    const urlName = decodeURIComponent(new URL(blob.publicUrl).pathname.split('/').pop() || '');
+    const m = urlName.match(/\.[A-Za-z0-9]{2,5}$/);
+    if (m) ext = m[0];
+  } catch { /* ignore */ }
+  if (!ext) ext = MIME_EXT[blob.mimeType] || '.bin';
+  return base + ext;
+}
+
 /**
  * Kết quả lưu 1 tin nhắn vào kho (dùng chung cho single + batch/album).
  * status: 'ok' | 'skipped' (tin không có media) | 'blocked' (nick Riêng tư không phải chủ) | 'error'.
@@ -439,9 +479,12 @@ export async function mediaRoutes(app: FastifyInstance) {
       // (GĐ3 sẽ tối ưu forward/cache per-nick — chưa làm ở GĐ1.)
       let tmp: { path: string; cleanup: () => Promise<void> } | null = null;
       try {
-        // KHÔNG truyền filename=asset.name (name "Lưu từ chat" KHÔNG có đuôi → temp mất
-        // đuôi → Zalo coi ảnh thành FILE). Để downloadMediaToTemp lấy tên từ URL (media/{hash}.webp).
-        tmp = await downloadMediaToTemp({ url: blob.publicUrl }, asset.kind);
+        // ẢNH/VIDEO: KHÔNG truyền filename (name "Lưu từ chat" không đuôi → temp mất đuôi →
+        // Zalo coi ảnh thành FILE). Để downloadMediaToTemp lấy đuôi .webp/.mp4 từ URL.
+        // FILE (pdf/excel/doc): BẮT BUỘC truyền tên thật + đuôi — zca-js lấy tên+đuôi khách
+        // nhìn thấy từ basename temp; thiếu đuôi → "file lỗi". (anh báo 2026-06-12.)
+        const sendName = asset.kind === 'file' ? buildSendFileName(asset, blob) : undefined;
+        tmp = await downloadMediaToTemp({ url: blob.publicUrl, filename: sendName }, asset.kind);
         zaloRateLimiter.recordSend(conversation.zaloAccountId);
 
         // Guard nick connected ở trên. Gửi qua zaloOps (check status + reconnect).

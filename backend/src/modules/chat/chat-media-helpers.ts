@@ -59,8 +59,21 @@ export function candidateDownloadUrls(url: string): string[] {
   return [...new Set(candidates)];
 }
 
+// Ký tự bị cấm trong tên file Windows/đường dẫn: \ / : * ? " < > |
+const ILLEGAL_FILENAME_CHARS = /[\\/:*?"<>|]+/g;
+// Ký tự điều khiển 0x00–0x1f (dựng từ codepoint để source chỉ chứa ASCII in được —
+// tránh nhúng byte điều khiển thô vào file gây hỏng khi tool khác lưu lại).
+const CONTROL_CHARS = new RegExp('[' + String.fromCharCode(0) + '-' + String.fromCharCode(31) + ']+', 'g');
+
 function sanitizeFileName(value?: string): string | undefined {
-  const cleaned = value?.replace(/[^\w.\-() ]+/g, '_').replace(/^\.+/, '').trim();
+  // GIỮ chữ Unicode (tiếng Việt có dấu) + dấu cách + gạch ngang + (). KHÔNG dùng \w (chỉ ASCII)
+  // vì \w biến "BẢNG VẬT LIỆU.pdf" → "B_NG V_T LI_U.pdf" (khách nhận file thấy tên xấu).
+  // Chỉ thay ký tự CẤM trong tên file + ký tự điều khiển. Đuôi (.) luôn giữ.
+  const cleaned = value
+    ?.replace(ILLEGAL_FILENAME_CHARS, '_')
+    .replace(CONTROL_CHARS, '')
+    .replace(/^\.+/, '')
+    .trim();
   return cleaned || undefined;
 }
 
