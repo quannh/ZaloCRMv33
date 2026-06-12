@@ -218,6 +218,10 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
     // 'video' + gắn thumbnail/metadata (videoMeta đã sinh ở trên vì kind='video'). Chỉ nâng
     // file→video (không hạ cấp), tránh đụng asset đã phân loại đúng.
     const shouldPatchKind = kind === 'video' && old?.kind === 'file';
+    // GĐ13a D5 (2026-06-12): nếu asset cũ ĐANG trong thùng rác (archivedAt != null) mà sale
+    // lưu LẠI đúng file đó → TỰ KHÔI PHỤC về kho (clear archivedAt + trashedById). Tránh
+    // dedup đụng bản ẩn khiến sale "lưu rồi mà kho không hiện".
+    const shouldRestore = !!old?.archivedAt;
     const asset = await prisma.mediaAsset.update({
       where: { id: existingBlob.assetId },
       data: {
@@ -227,8 +231,12 @@ export async function registerAsset(input: RegisterAssetInput): Promise<Register
         ...(shouldPatchKind
           ? { kind: 'video', ...(videoMeta.thumbnailUrl ? { thumbnailUrl: videoMeta.thumbnailUrl } : {}) }
           : {}),
+        ...(shouldRestore ? { archivedAt: null, trashedById: null } : {}),
       },
     });
+    if (shouldRestore) {
+      logger.info(`[media][dedup] auto-restore asset=${existingBlob.assetId} (lưu lại đồ đang trong thùng rác → về kho)`);
+    }
     if (shouldPatchKind) {
       // Vá luôn metadata video trên blob đã tồn tại (duration/width/height) để player hiển thị đúng.
       await prisma.mediaBlob.update({

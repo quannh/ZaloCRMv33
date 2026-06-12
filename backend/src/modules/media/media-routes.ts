@@ -45,6 +45,11 @@ const IMAGE_MAX = 15 * 1024 * 1024;
 const VIDEO_MAX = 500 * 1024 * 1024;
 const FILE_MAX = 1024 * 1024 * 1024;
 
+// GĐ13a Thùng rác Media (2026-06-12): giữ trong thùng rác 30 ngày rồi cron tự dọn (xóa hàng DB,
+// KHÔNG đụng byte MinIO). TRASH_EMPTY_BATCH: dọn-sạch-thủ-công xóa tối đa N/lần tránh khóa DB lâu.
+export const TRASH_RETENTION_DAYS = 30;
+const TRASH_EMPTY_BATCH = 500;
+
 function classify(mime: string): MediaKind | null {
   if (ALLOWED_IMAGE.includes(mime)) return 'image';
   if (ALLOWED_VIDEO.includes(mime)) return 'video';
@@ -668,9 +673,9 @@ export async function mediaRoutes(app: FastifyInstance) {
     },
   );
 
-  // ── DELETE /api/v1/media/:id — archive (xóa MỀM, giữ object MinIO) ─────────
-  // archive: grant 'edit' đủ (sale archive ảnh CỦA MÌNH). Xóa của người khác cần
-  // view_all (admin/marketing). delete grant không bắt buộc — archive ≠ hard delete.
+  // ── DELETE /api/v1/media/:id — vào THÙNG RÁC (xóa MỀM, giữ object MinIO) ────
+  // GĐ13a (2026-06-12): archivedAt = dấu thùng rác. grant 'edit' đủ (sale xóa ảnh CỦA MÌNH).
+  // Xóa của người khác cần view_all (admin). Ghi trashedById để audit + scope khôi phục.
   app.delete(
     '/api/v1/media/:id',
     { preHandler: requireGrant('media', 'edit') },
@@ -683,9 +688,121 @@ export async function mediaRoutes(app: FastifyInstance) {
         where: { id, orgId: user.orgId, archivedAt: null, ...(canViewAll ? {} : { ownerUserId: userId }) },
       });
       if (!asset) return reply.status(404).send({ error: 'Không tìm thấy media' });
-      // INVARIANT: archive thôi, KHÔNG xóa object MinIO (giữ lịch sử chat cũ trỏ tới).
-      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: new Date() } });
+      // INVARIANT: chỉ vào thùng rác, KHÔNG xóa object MinIO (giữ lịch sử chat cũ trỏ tới).
+      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: new Date(), trashedById: userId } });
+      logger.info(`[media][audit] trash asset=${id} user=${userId}`);
       return { ok: true };
+    },
+  );
+
+  // ── GET /api/v1/media/trash — danh sách asset trong thùng rác ──────────────
+  // GĐ13a: chỉ asset archivedAt != null. Scope owner (sale) / view_all (admin). Có limit+cursor.
+  // Trả thêm archivedAt + trashedById + daysUntilPurge (30 - số ngày đã trong thùng).
+  app.get(
+    '/api/v1/media/trash',
+    { preHandler: requireGrant('media', 'access') },
+    async (request: FastifyRequest) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const q = request.query as { kind?: string; limit?: string; cursor?: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const limit = Math.min(parseInt(q.limit ?? '60', 10) || 60, 200);
+
+      const where: any = {
+        orgId: user.orgId,
+        archivedAt: { not: null },
+        ...(canViewAll ? {} : { ownerUserId: userId }),
+        ...(q.kind ? { kind: q.kind } : {}),
+      };
+      const assets = await prisma.mediaAsset.findMany({
+        where,
+        orderBy: [{ archivedAt: 'desc' }, { id: 'asc' }],
+        take: limit + 1,
+        ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+        include: { blobs: { where: { variantType: 'original' }, take: 1 } },
+      });
+      const hasMore = assets.length > limit;
+      const page = hasMore ? assets.slice(0, limit) : assets;
+      const now = Date.now();
+      const items = page.map((a) => {
+        const archivedMs = a.archivedAt ? a.archivedAt.getTime() : now;
+        const daysInTrash = Math.floor((now - archivedMs) / 86400000);
+        return {
+          id: a.id, kind: a.kind, name: a.name, originalFilename: a.originalFilename,
+          thumbnailUrl: a.thumbnailUrl, visibility: a.visibility, tagIds: a.tagIds,
+          sizeBytes: a.blobs[0]?.sizeBytes ?? null, durationSec: a.blobs[0]?.durationSec ?? null,
+          archivedAt: a.archivedAt, trashedById: a.trashedById,
+          daysUntilPurge: Math.max(0, TRASH_RETENTION_DAYS - daysInTrash),
+        };
+      });
+      return { items, nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null };
+    },
+  );
+
+  // ── POST /api/v1/media/:id/restore — khôi phục từ thùng rác về kho ─────────
+  // GĐ13a: archivedAt về null + clear trashedById. Scope như DELETE (chủ / view_all).
+  app.post(
+    '/api/v1/media/:id/restore',
+    { preHandler: requireGrant('media', 'edit') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const { id } = request.params as { id: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id, orgId: user.orgId, archivedAt: { not: null }, ...(canViewAll ? {} : { ownerUserId: userId }) },
+      });
+      if (!asset) return reply.status(404).send({ error: 'Không tìm thấy media trong thùng rác' });
+      await prisma.mediaAsset.update({ where: { id }, data: { archivedAt: null, trashedById: null } });
+      logger.info(`[media][audit] restore asset=${id} user=${userId}`);
+      return { ok: true };
+    },
+  );
+
+  // ── DELETE /api/v1/media/:id/permanent — xóa cứng 1 asset NGAY ─────────────
+  // GĐ13a: cần grant media.delete (mạnh hơn edit). BẮT BUỘC asset đang ở thùng rác
+  // (archivedAt != null) — chặn bypass xóa cứng asset active. KHÔNG đụng byte MinIO.
+  app.delete(
+    '/api/v1/media/:id/permanent',
+    { preHandler: requireGrant('media', 'delete') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const { id } = request.params as { id: string };
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id, orgId: user.orgId, archivedAt: { not: null }, ...(canViewAll ? {} : { ownerUserId: userId }) },
+      });
+      if (!asset) return reply.status(404).send({ error: 'Chỉ xóa vĩnh viễn được media đang trong thùng rác' });
+      // Cascade Prisma: xóa asset → blob + album_item + usage_event tự xóa. KHÔNG xóa byte MinIO.
+      await prisma.mediaAsset.delete({ where: { id } });
+      logger.info(`[media][audit] permanent_delete asset=${id} user=${userId} (DB only, MinIO byte giữ)`);
+      return { ok: true };
+    },
+  );
+
+  // ── DELETE /api/v1/media/trash/empty — dọn sạch thùng rác (DB) ─────────────
+  // GĐ13a: cần grant media.delete. Sale xóa của mình; admin (view_all) xóa cả org.
+  // Batch theo cap để không khóa DB lâu. KHÔNG đụng byte MinIO.
+  app.delete(
+    '/api/v1/media/trash/empty',
+    { preHandler: requireGrant('media', 'delete') },
+    async (request: FastifyRequest) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const where: any = {
+        orgId: user.orgId, archivedAt: { not: null },
+        ...(canViewAll ? {} : { ownerUserId: userId }),
+      };
+      // Lấy id theo cap (deterministic) rồi xóa — tránh deleteMany ôm nghìn hàng 1 phát.
+      const victims = await prisma.mediaAsset.findMany({
+        where, select: { id: true }, orderBy: [{ archivedAt: 'asc' }, { id: 'asc' }], take: TRASH_EMPTY_BATCH,
+      });
+      if (victims.length === 0) return { ok: true, deleted: 0, hasMore: false };
+      await prisma.mediaAsset.deleteMany({ where: { id: { in: victims.map((v) => v.id) } } });
+      logger.info(`[media][audit] empty_trash user=${userId} deleted=${victims.length} (DB only)`);
+      return { ok: true, deleted: victims.length, hasMore: victims.length === TRASH_EMPTY_BATCH };
     },
   );
 

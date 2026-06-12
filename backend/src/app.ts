@@ -400,6 +400,12 @@ async function bootstrap() {
     // nội bộ thủ công đã gỡ bỏ (gây bug gửi nhầm UID). Không còn handshake pending để dọn.
     // Phase Lead Pool 2026-05-24 — auto-return expired leads 2am daily
     startLeadPoolCron();
+    // GĐ13a 2026-06-13 — tự dọn thùng rác Media sau 30 ngày (03:30 VN). Chỉ xóa hàng DB,
+    // KHÔNG đụng byte MinIO. DRY-RUN mặc định BẬT (env MEDIA_TRASH_GC_DRYRUN='0' để bật xóa thật).
+    if (config.nodeEnv !== 'test') {
+      const { startMediaTrashGcCron } = await import('./modules/media/media-trash-gc-cron.js');
+      startMediaTrashGcCron();
+    }
     // Phase Multi-Source Lead Ads 2026-05-27 — outbox worker (LISTEN/NOTIFY + 30s poll)
     // dispatch fb webhook logs → Graph API fetch → normalize → route → insert entry.
     registerLogProcessor('fb-leadads', processFbWebhookLog);
