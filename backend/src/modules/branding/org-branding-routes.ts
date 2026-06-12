@@ -1,0 +1,58 @@
+/*
+ * org-branding-routes.ts — Public (PRE-AUTH) org branding for the login page.
+ *
+ * GET /api/v1/public/org-branding
+ *   → { logoUrl, name, slogan, copyright, emailDomain }
+ *
+ * Trang /login chạy TRƯỚC khi đăng nhập nên không có JWT → không gọi được
+ * /api/v1/organization (cần auth). Endpoint này công khai, CHỈ trả 5 trường
+ * branding an toàn (allowlist tường minh), không lộ bất kỳ dữ liệu nhạy cảm nào.
+ *
+ * Tenancy: hệ thống đa tổ chức (mọi route khác dùng where:{id:user.orgId}),
+ * nhưng pre-auth không biết orgId → resolve bằng org ĐẦU TIÊN theo createdAt
+ * (giả định "1 tổ chức / 1 lần cài" — đúng với bản tự host private-hs).
+ * Khi đa tổ chức thật, đổi sang resolve theo request host (xem plan E1-B).
+ *
+ * Chưa có org nào (cài lần đầu) → trả defaults 200 (KHÔNG 404/500) để login
+ * vẫn render được. Front-end còn 1 lớp fallback hardcode riêng (D4-A).
+ *
+ * Rate-limit: global limiter (app.ts) đã key theo IP cho request thiếu token
+ * (keyGenerator → `ip:`), nên route này được bảo vệ sẵn — không cần limiter cục bộ.
+ * Cache-Control 60s giảm tải Postgres cho lượt mở trang login lặp lại.
+ */
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { prisma } from '../../shared/database/prisma-client.js';
+
+// Giá trị mặc định khi chưa có org / trường null. Trùng với hardcode hiện tại
+// trên LoginView để trải nghiệm nhất quán dù endpoint trả defaults.
+const DEFAULTS = {
+  logoUrl: null as string | null,
+  name: 'HS Holding',
+  slogan: 'Bền vững · Trường tồn',
+  copyright: `© ${new Date().getFullYear()} HS Holding`,
+  emailDomain: null as string | null,
+};
+
+export async function orgBrandingRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/v1/public/org-branding', async (_request, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    try {
+      const org = await prisma.organization.findFirst({
+        orderBy: { createdAt: 'asc' },
+        // Allowlist tường minh — chỉ 5 trường branding, không select gì khác.
+        select: { name: true, logoUrl: true, slogan: true, copyright: true, emailDomain: true },
+      });
+      if (!org) return DEFAULTS;
+      return {
+        logoUrl: org.logoUrl ?? DEFAULTS.logoUrl,
+        name: org.name?.trim() || DEFAULTS.name,
+        slogan: org.slogan ?? DEFAULTS.slogan,
+        copyright: org.copyright ?? DEFAULTS.copyright,
+        emailDomain: org.emailDomain ?? DEFAULTS.emailDomain,
+      };
+    } catch {
+      // Lỗi DB không được làm vỡ trang login → trả defaults.
+      return DEFAULTS;
+    }
+  });
+}
