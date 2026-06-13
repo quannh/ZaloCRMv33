@@ -106,6 +106,23 @@ export async function getObjectStream(key: string): Promise<NodeJS.ReadableStrea
   }
 }
 
+/**
+ * 2026-06-13: đọc TOÀN BỘ object thành Buffer (cho proxy-download). Dùng thay vì pipe stream
+ * thẳng vào Fastify reply — pipe MinIO-stream → reply ĐÔI KHI TREO (socket hang up, đã gặp).
+ * File kho nhỏ (vài MB) nên buffer an toàn. Trả null nếu key sai prefix / không tồn tại.
+ */
+export async function getObjectBuffer(key: string): Promise<Buffer | null> {
+  const stream = await getObjectStream(key);
+  if (!stream) return null;
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of stream) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+    return Buffer.concat(chunks);
+  } catch {
+    return null;
+  }
+}
+
 /** Trích object key (media/{hash}.ext) từ public URL kho. Trả '' nếu URL không thuộc bucket. */
 export function keyFromPublicUrl(url: string): string {
   if (!url) return '';

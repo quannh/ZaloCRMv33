@@ -23,7 +23,7 @@ import { downloadMediaToTemp } from '../chat/chat-media-helpers.js';
 import { createMediaMessage, getUserFullName } from '../chat/chat-helpers.js';
 import { emitChatMessage } from '../../shared/realtime/emit-chat.js';
 import { generateThumbnail, sendNativeVideo } from '../../shared/video-processor.js';
-import { uploadBuffer, getObjectStream, keyFromPublicUrl } from '../../shared/storage/minio-client.js';
+import { uploadBuffer, getObjectBuffer, keyFromPublicUrl } from '../../shared/storage/minio-client.js';
 import { scanOrPass } from '../../shared/security/clamav-client.js';
 import { readFile } from 'node:fs/promises';
 import { logger } from '../../shared/utils/logger.js';
@@ -760,8 +760,10 @@ export async function mediaRoutes(app: FastifyInstance) {
       if (!q.url) return reply.status(400).send({ error: 'Thiếu url' });
       const key = keyFromPublicUrl(q.url);
       if (!key) return reply.status(400).send({ error: 'URL không thuộc kho' });
-      const stream = await getObjectStream(key);
-      if (!stream) return reply.status(404).send({ error: 'Không tìm thấy tệp' });
+      // BUFFER (không pipe stream) — pipe MinIO-stream vào reply đôi khi TREO (socket hang up,
+      // anh gặp 2 file). Đọc hết thành Buffer rồi send → ổn định, file kho nhỏ vài MB.
+      const buf = await getObjectBuffer(key);
+      if (!buf) return reply.status(404).send({ error: 'Không tìm thấy tệp' });
       // Tên tải về: name truyền lên (đã có đuôi) → fallback basename của key. Lọc ký tự cấm header.
       const rawName = (q.name && q.name.trim()) || decodeURIComponent(key.split('/').pop() || 'tep');
       const safeName = rawName.replace(/["\r\n]/g, '').slice(0, 200);
@@ -769,8 +771,9 @@ export async function mediaRoutes(app: FastifyInstance) {
       reply
         .header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`)
         .header('Content-Type', 'application/octet-stream')
+        .header('Content-Length', String(buf.length))
         .header('Cache-Control', 'private, max-age=0');
-      return reply.send(stream);
+      return reply.send(buf);
     },
   );
 

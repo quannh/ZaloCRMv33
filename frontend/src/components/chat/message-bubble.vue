@@ -349,6 +349,7 @@ import ReactionDisplay from '@/components/chat/reaction-display.vue';
 import ReactionPicker from '@/components/chat/reaction-picker.vue';
 import Avatar from '@/components/ui/Avatar.vue';
 import MessageSourceBadge from '@/components/chat/MessageSourceBadge.vue';
+import { useToast } from '@/composables/use-toast';
 
 const props = defineProps<{
   message: Message;
@@ -877,16 +878,25 @@ function onPickerReact(key: string) {
 
 // 2026-06-13 (anh báo tải file mất tên): kho lưu media/{hash}.ext nên mở thẳng URL → tải về
 // tên-hash. Tải QUA cổng CRM /media/download (cùng origin, gắn Content-Disposition tên thật) →
-// trình duyệt giữ đúng tên. Dùng axios api (kèm auth) → blob → <a download>. Fallback mở URL nếu lỗi.
+// trình duyệt giữ đúng tên. Dùng axios api (kèm auth) → blob → <a download="tên thật">.
+// 2026-06-13 (anh báo 1 file tải ra tên hash + Chrome hỏi popup): lỗi cổng tải lúc đó là
+// TIMEOUT tạm thời → trước đây fallback window.open(href) = tải tên-hash (sai). Giờ: RETRY 1
+// lần (timeout 60s cho file lớn), nếu vẫn lỗi thì BÁO toast (KHÔNG window.open để tránh tên-hash).
+const downloadingFiles = new Set<string>();
 async function openFile(href: string, name?: string) {
+  if (downloadingFiles.has(href)) return; // chống double-click → tránh Chrome hỏi popup "tải nhiều"
+  downloadingFiles.add(href);
+  const { api } = await import('@/api/index');
+  const fetchBlob = () => api.get('/media/download', {
+    params: { url: href, name: name || '' },
+    responseType: 'blob',
+    timeout: 60000, // file lớn (vài MB) + MinIO cold → nới timeout, tránh fallback tên-hash
+  });
   try {
-    const { api } = await import('@/api/index');
-    const res = await api.get('/media/download', {
-      params: { url: href, name: name || '' },
-      responseType: 'blob',
-    });
-    const blob = res.data as Blob;
-    const blobUrl = URL.createObjectURL(blob);
+    let res;
+    try { res = await fetchBlob(); }
+    catch { res = await fetchBlob(); } // retry 1 lần (lỗi mạng/timeout tạm thời)
+    const blobUrl = URL.createObjectURL(res.data as Blob);
     const a = document.createElement('a');
     a.href = blobUrl;
     a.download = name || 'tep';
@@ -895,9 +905,10 @@ async function openFile(href: string, name?: string) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
   } catch (e) {
-    // Lỗi cổng tải (vd token/file) → mở thẳng URL kho (tab mới; tên có thể là hash). Log để debug.
-    console.error('[openFile] tải qua cổng lỗi, fallback URL:', e);
-    window.open(href, '_blank');
+    console.error('[openFile] tải qua cổng lỗi sau retry:', e);
+    try { useToast().warning('Tải tệp lỗi tạm thời, thử lại sau ít giây.'); } catch { /* */ }
+  } finally {
+    downloadingFiles.delete(href);
   }
 }
 </script>
