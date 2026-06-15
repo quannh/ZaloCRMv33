@@ -514,6 +514,7 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
       // delayed lại=bị hoãn (ngoài giờ/nick offline), còn waiting/active=đang xử lý.
       let actuallySent = false;
       let deferred = false;
+      let deferReason: string | null = null; // lý do hoãn (worker ghi job.data) → FE báo câu dễ hiểu
       const deadline = Date.now() + 8000;
       const jobRef = promotedJobRefs[0];
       if (jobRef?.id) {
@@ -523,7 +524,11 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
           const st = await fresh.getState().catch(() => 'unknown');
           if (st === 'completed') { actuallySent = true; break; }
           if (st === 'failed') { break; }
-          if (st === 'delayed') { deferred = true; break; } // worker hoãn lại (ngoài giờ/nick)
+          if (st === 'delayed') {
+            deferred = true;
+            deferReason = ((fresh.data as { deferReason?: string })?.deferReason) ?? null;
+            break;
+          } // worker hoãn lại — đọc lý do cụ thể từ job.data
           await new Promise((r) => setTimeout(r, 400));
         }
       }
@@ -532,7 +537,8 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
         ok: true,
         promoted,
         actuallySent, // true = tin đã thực sự gửi; false = mới đẩy vào hàng đợi
-        deferred,     // true = job bị hoãn lại (ngoài giờ hoạt động / nick offline)
+        deferred,     // true = job bị hoãn lại
+        deferReason,  // 'nick_gap'|'outside_hour_window'|'quota_capped'|'nick_offline'|'awaiting_reply'|null
       };
     },
   );

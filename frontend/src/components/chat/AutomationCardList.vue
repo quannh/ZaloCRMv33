@@ -161,9 +161,10 @@ import ConfirmActionModal from './ConfirmActionModal.vue';
 import { useToast } from '@/composables/use-toast';
 
 const toastSvc = useToast();
-// Helper gọn: toast(msg) = thông báo thường; toast(msg, 'error') = lỗi.
-function toast(message: string, type: 'success' | 'error' = 'success'): void {
+// Helper gọn: toast(msg)=thường(xanh); 'warning'=vàng (không phải lỗi); 'error'=đỏ.
+function toast(message: string, type: 'success' | 'error' | 'warning' = 'success'): void {
   if (type === 'error') toastSvc.error(message);
+  else if (type === 'warning') toastSvc.warning(message);
   else toastSvc.success(message);
 }
 
@@ -368,7 +369,7 @@ async function onAction(
     if (card.advanceEnabled === false) return;
     card.busy = true;
     try {
-      const res = await api.post<{ ok: boolean; promoted: number; actuallySent?: boolean; deferred?: boolean }>(
+      const res = await api.post<{ ok: boolean; promoted: number; actuallySent?: boolean; deferred?: boolean; deferReason?: string | null }>(
         `/automation/triggers/${card.triggerId}/contacts/${props.contactId}/advance`,
         { sequenceId: card.sequenceId ?? undefined },
       );
@@ -377,9 +378,16 @@ async function onAction(
       if (d.actuallySent) {
         toast('Đã gửi bước tiếp cho khách');
       } else if (d.deferred) {
-        // Job đã đẩy nhưng worker hoãn (giãn cách chống spam nick / ngoài giờ gửi / nick chưa
-        // kết nối). Hệ thống tự gửi khi đủ điều kiện — KHÔNG báo "đã gửi" (tránh hiểu nhầm).
-        toast('Đã yêu cầu gửi — hệ thống đang chờ đủ điều kiện (giãn cách chống spam / giờ gửi / nick) rồi tự gửi', 'error');
+        // Job đã đẩy nhưng worker hoãn — KHÔNG phải lỗi (hệ thống tự gửi khi đủ điều kiện).
+        // Báo màu VÀNG + đúng 1 lý do cụ thể (BE trả deferReason) cho dễ hiểu.
+        const reasonMsg: Record<string, string> = {
+          nick_gap: 'Vừa gửi tin xong — chờ chút cho tự nhiên rồi hệ thống tự gửi tiếp',
+          outside_hour_window: 'Đang ngoài giờ gửi tin — hệ thống sẽ tự gửi khi tới giờ làm việc',
+          quota_capped: 'Nick này đã gửi đủ số tin trong ngày — sẽ tự gửi vào ngày mai',
+          nick_offline: 'Nick đang ngắt kết nối — sẽ tự gửi ngay khi nick online lại',
+          awaiting_reply: 'Khách vừa nhắn lại — tạm dừng gửi tự động để bạn trả lời trước',
+        };
+        toast(reasonMsg[d.deferReason ?? ''] ?? 'Đã ghi nhận — hệ thống đang chờ đủ điều kiện rồi tự gửi', 'warning');
       } else {
         toast('Đang gửi bước tiếp — hệ thống đang xử lý, tin sẽ hiện trong giây lát');
       }

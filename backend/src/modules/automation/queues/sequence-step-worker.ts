@@ -64,6 +64,10 @@ export interface SequenceStepJobData {
   // 2026-06-15: số lần gắn (epoch) — gắn lại cùng luồng tăng epoch → jobId mới. Mọi step
   // của 1 lần gắn dùng CÙNG epoch (lazy-chain kế thừa). Optional: job cũ thiếu → coi = 1.
   enrollEpoch?: number;
+  // 2026-06-15: lý do worker HOÃN job (ghi khi moveToDelayed) → nút "Gửi bước tiếp ngay"
+  // đọc để báo sale câu dễ hiểu. 'nick_gap'|'outside_hour_window'|'quota_capped'|
+  // 'nick_offline'|'awaiting_reply'|'unknown'. Xóa/ghi đè mỗi lần defer.
+  deferReason?: string;
 }
 
 export interface SequenceStepResult {
@@ -296,6 +300,8 @@ async function processJob(
       logger.warn(`${tag} set nickHoldSince failed nick=${nickId}: ${err?.message ?? err}`);
     });
     const delayMs = 30 * 60 * 1000;
+    // 2026-06-15: ghi lý do hoãn để nút "Gửi bước tiếp ngay" báo cho sale câu dễ hiểu.
+    await job.updateData({ ...job.data, deferReason: 'nick_offline' }).catch(() => {});
     await job.moveToDelayed(Date.now() + delayMs, token);
     logger.info(
       `${tag} nick=${nickId} status=${nick.status} — hold 30 phút (Sprint v3 sticky 24h)`,
@@ -340,6 +346,7 @@ async function processJob(
   const pauseTtl = await redis.pttl(pauseKey);
   if (pauseTtl > 0 && token) {
     const resumeAt = Date.now() + pauseTtl;
+    await job.updateData({ ...job.data, deferReason: 'awaiting_reply' }).catch(() => {});
     await job.moveToDelayed(resumeAt, token);
     logger.info(`${tag} paused contact ${contactId} (redis flag), defer ${pauseTtl}ms`);
     throw new DelayedError();
@@ -354,6 +361,7 @@ async function processJob(
       select: { id: true },
     });
     if (pausedSession) {
+      await job.updateData({ ...job.data, deferReason: 'awaiting_reply' }).catch(() => {});
       await job.moveToDelayed(Date.now() + 60 * 60_000, token);
       logger.info(`${tag} LUẬT 4: phiên active còn pausedAtStepIdx (khách đã reply) → defer 1h chờ resume contact=${contactId}`);
       throw new DelayedError();
@@ -382,6 +390,10 @@ async function processJob(
 
   if (!guard.passed) {
     if (guard.deferUntilMs && guard.deferUntilMs > Date.now() && token) {
+      // guard.reason dạng "nick_gap (Xms remaining)" / "outside_hour_window (...)" /
+      // "quota_capped (...)" → rút MÃ đầu (trước khoảng trắng) để nút advance báo đúng câu.
+      const deferReason = (guard.reason ?? '').split(' ')[0] || 'unknown';
+      await job.updateData({ ...job.data, deferReason }).catch(() => {});
       await job.moveToDelayed(guard.deferUntilMs, token);
       throw new DelayedError();
     }
@@ -472,6 +484,7 @@ async function processJob(
       if (pausedNow) {
         const deferMs = pauseTtlNow > 0 ? pauseTtlNow : 60 * 60_000;
         logger.info(`${tag} LUẬT 4: KH vừa reply trước send — defer ${deferMs}ms (active-send race guard)`);
+        await job.updateData({ ...job.data, deferReason: 'awaiting_reply' }).catch(() => {});
         await job.moveToDelayed(Date.now() + deferMs, token);
         throw new DelayedError();
       }
