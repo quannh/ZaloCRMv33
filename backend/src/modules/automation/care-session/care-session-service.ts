@@ -177,11 +177,14 @@ export async function createCareSession(input: CreateCareSessionInput): Promise<
   // nếu thiếu → tự resolve từ Friend(nickId, contactId).zaloUidInNick. null = chưa có.
   const externalThreadId = input.externalThreadId ?? (await resolveThreadId(nickId, contactId));
 
-  // Dup-guard: phiên mở cùng (contact, nick, nguồn-trigger) → tái dùng.
+  // Dup-guard: phiên mở cùng (contact, nick, nguồn-trigger, SEQUENCE) → tái dùng.
   // sourceTriggerId null (gắn tay thuần) → dedup theo (contact, nick, sequence).
   // 2026-06-08: thêm thread. Tái dùng nếu phiên active có CÙNG thread HOẶC thread NULL
   // (phiên legacy/no-Zalo chưa gắn thread → tái dùng + backfill thread). Thread khác hẳn →
   // tạo phiên mới (2 hội thoại khác nhau của cùng contact+nick = 2 phiên riêng).
+  // LỖI B (2026-06-15): nhánh sourceTriggerId PHẢI gồm sourceSequenceId. Manual-enroll dùng
+  // CHUNG 1 systemTrigger cho mọi luồng → nếu chỉ match (contact,nick,trigger) thì gắn luồng B
+  // sẽ reuse phiên luồng A → luồng B chết. Anh chốt 1 KH chạy nhiều luồng song song được.
   const existing = await prisma.careSession.findFirst({
     where: {
       orgId,
@@ -189,7 +192,7 @@ export async function createCareSession(input: CreateCareSessionInput): Promise<
       nickId,
       state: 'active',
       ...(sourceTriggerId
-        ? { sourceTriggerId }
+        ? { sourceTriggerId, sourceSequenceId } // gồm cả sequence → 2 luồng khác nhau KHÔNG đụng nhau
         : { sourceSequenceId, sourceType: 'sequence_manual' }),
       ...(externalThreadId
         ? { OR: [{ externalThreadId }, { externalThreadId: null }] }
@@ -236,10 +239,12 @@ export async function createCareSession(input: CreateCareSessionInput): Promise<
   } catch (err) {
     // RACE: 2 path (enroll I31 + self-heal I32) chạy đồng thời cùng giây → cả 2 vượt
     // dup-guard findFirst trước khi commit. Partial unique index (contact,nick,trigger,
-    // state=active) chặn ở DB → P2002. Tái dùng phiên path kia vừa tạo.
+    // SEQUENCE,state=active) chặn ở DB → P2002. Tái dùng phiên path kia vừa tạo.
+    // LỖI B (2026-06-15): winner lookup PHẢI gồm sourceSequenceId — khớp index mới, không
+    // reuse nhầm phiên luồng khác của cùng (contact,nick,trigger).
     if (sourceTriggerId && (err as { code?: string }).code === 'P2002') {
       const winner = await prisma.careSession.findFirst({
-        where: { orgId, contactId, nickId, sourceTriggerId, state: 'active' },
+        where: { orgId, contactId, nickId, sourceTriggerId, sourceSequenceId, state: 'active' },
         select: { id: true },
       });
       if (winner) {
@@ -333,6 +338,32 @@ export async function markSequenceStartEnqueued(sessionId: string): Promise<void
  *
  * @returns sessionId (null nếu thiếu dữ liệu để tạo)
  */
+
+/**
+ * resolveNextEnrollEpoch — số lần gắn KẾ TIẾP cho (contact, sequence).
+ *
+ * Dùng CHUNG cho cả gắn tay (manual-enroll) lẫn tự động (materializer event-driven).
+ * = MAX(enrollEpoch các phiên cũ) + 1. KHÔNG dùng count+1 vì count không monotonic
+ * (1 lần tạo phiên fail → count thiếu → epoch tái dùng → jobId đụng job cũ còn sống → dedup
+ * nuốt = đúng bug gốc). Phiên cũ enrollEpoch NULL (data trước cột) = ngầm hiểu 1.
+ *
+ * LẦN ĐẦU (chưa phiên nào) → trả 1 → jobId `...-e1-0` (giữ idempotency probe friend-invite
+ * vốn dựa trên epoch=1). Chỉ re-enroll (đã có phiên cũ) mới > 1 → jobId mới không đụng job cũ.
+ */
+export async function resolveNextEnrollEpoch(
+  orgId: string,
+  contactId: string,
+  sequenceId: string,
+): Promise<number> {
+  const agg = await prisma.careSession.aggregate({
+    where: { orgId, contactId, sourceSequenceId: sequenceId },
+    _max: { enrollEpoch: true },
+    _count: { _all: true },
+  });
+  const maxEpoch = agg._max.enrollEpoch ?? (agg._count._all > 0 ? 1 : 0);
+  return maxEpoch + 1;
+}
+
 export async function enrollFromTrigger(input: {
   orgId: string;
   triggerId: string;
@@ -413,6 +444,7 @@ export async function enrollFromTrigger(input: {
         nickId: input.nickId,
         orgId: input.orgId,
         startDelayMinutes: input.sequenceStartDelayMinutes,
+        enrollEpoch: input.enrollEpoch, // LỖI 5: job step 0 phải cùng epoch với phiên, không thì gắn lại trigger đụng jobId cũ
       });
       await markSequenceStartEnqueued(sessionId);
     } catch (err) {
@@ -626,6 +658,7 @@ export async function reconcileMissingSequenceStart(): Promise<{ recovered: numb
       nickId: true,
       sourceTriggerId: true,
       sourceSequenceId: true,
+      enrollEpoch: true, // FIX review-epoch #1 (LỖI 1): reconcile phải dùng đúng epoch của phiên
     },
     take: 200, // batch nhỏ, cron chạy lại lượt sau nếu còn
   });
@@ -641,6 +674,7 @@ export async function reconcileMissingSequenceStart(): Promise<{ recovered: numb
         nickId: s.nickId,
         orgId: s.orgId,
         startDelayMinutes: 0, // đã trễ rồi, gửi sớm
+        enrollEpoch: s.enrollEpoch ?? 1, // FIX#1: jobId đúng epoch (không tạo job e1 cho phiên e2)
       });
       await markSequenceStartEnqueued(s.id);
       recovered++;

@@ -192,6 +192,8 @@ async function enqueueNextStep(
             totalSteps: data.totalSteps,
             jobId: nextJobId,
             delayMs,
+            sequenceId: data.sequenceId, // FIX#4: sweeper check enqueuedExists đúng luồng
+            enrollEpoch: data.enrollEpoch ?? 1, // FIX#4: đúng lần gắn (epoch)
           },
         },
       })
@@ -435,6 +437,23 @@ async function processJob(
     if (block.actionType !== 'send_message') {
       logger.warn(`${tag} unsupported action type=${block.actionType} in sequence-step worker`);
       return { status: 'skipped', stepIdx, reason: `unsupported_action_${block.actionType}` };
+    }
+    // FIX review-epoch #3 (LỖI 3 — active job mồ côi sau gắn lại): nếu job này thuộc lần
+    // gắn CŨ (epoch khác phiên active hiện tại) → luồng đã bị reenroll thay thế → DỪNG HẲN,
+    // không gửi + không chain tiếp (tránh tin ma song song chain mới). Chỉ check khi epoch>1
+    // hoặc có phiên active epoch khác (đường thường epoch=1 không có phiên epoch khác).
+    {
+      const jobEpoch = (job.data.enrollEpoch ?? 1);
+      const activeSession = await prisma.careSession.findFirst({
+        where: { orgId, contactId, sourceSequenceId: sequenceId, state: 'active' },
+        orderBy: { openedAt: 'desc' },
+        select: { enrollEpoch: true },
+      });
+      // Có phiên active với epoch KHÁC job này → job là epoch cũ mồ côi → dừng.
+      if (activeSession && (activeSession.enrollEpoch ?? 1) !== jobEpoch) {
+        logger.info(`${tag} epoch cũ mồ côi (job e${jobEpoch} vs phiên active e${activeSession.enrollEpoch ?? 1}) → dừng, không gửi`);
+        return { status: 'skipped', stepIdx, reason: 'stale_epoch' };
+      }
     }
     // LUẬT 4 GUARD (Codex #3 active-send race): RE-CHECK pause flag NGAY TRƯỚC send.
     // Giữa STEP 2 (pause check đầu job) và đây có runAllGuards + DB reads — khách có thể
@@ -792,32 +811,14 @@ export async function sweepMissingNextSteps(): Promise<{ recovered: number }> {
 
     if (!evt.triggerId || !evt.contactId) continue;
 
-    // Check sequence_step_enqueued cho step N+1
-    const enqueuedExists = await prisma.automationEventLog.findFirst({
-      where: {
-        triggerId: evt.triggerId,
-        contactId: evt.contactId,
-        eventType: 'sequence_step_enqueued',
-        detail: { contains: `step ${nextStepIdx}/` },
-      },
-      select: { id: true },
-    });
-
-    if (enqueuedExists) continue;
-
-    // Sweeper recovery: enqueue step N+1 với jobId dedup.
-    // 2026-06-13 (FIX code-review #5): jobId cần sequenceId. trigger.sequenceId NULL cho
-    // system trigger gắn tay → KHÔNG dùng được. Nguồn chân lý "khách đang chạy luồng nào"
-    // = CareSession active (sourceSequenceId). Fallback trigger.sequenceId cho trigger thường.
-    const queue = getSequenceStepQueue();
+    // ── Resolve sequenceId + epoch của EVENT NÀY trước (cần để check enqueuedExists đúng). ──
+    // LOW#3 fix: ưu tiên metadata event (chính xác kể cả đa-luồng); fallback trigger / CareSession.
+    const evtMeta = evt.metadata as { sequenceId?: string; enrollEpoch?: number } | null;
     const trigger = await prisma.automationTrigger.findUnique({
       where: { id: evt.triggerId },
       select: { sequenceId: true, orgId: true },
     });
     if (!trigger) continue;
-    // LOW#3 fix: ưu tiên sequenceId từ metadata event (chính xác, kể cả đa-luồng);
-    // fallback trigger.sequenceId; cuối cùng CareSession active (đoán nếu data cũ).
-    const evtMeta = evt.metadata as { sequenceId?: string } | null;
     let sequenceId = evtMeta?.sequenceId ?? trigger.sequenceId ?? null;
     if (!sequenceId) {
       const session = await prisma.careSession.findFirst({
@@ -828,9 +829,33 @@ export async function sweepMissingNextSteps(): Promise<{ recovered: number }> {
       sequenceId = session?.sourceSequenceId ?? null;
     }
     if (!sequenceId) continue; // không xác định được luồng → bỏ qua an toàn
+    const evtEpoch = evtMeta?.enrollEpoch ?? 1;
 
-    // Epoch từ metadata event (ghi lúc step_sent). Fallback 1 (job/event cũ trước epoch).
-    const evtEpoch = (evtMeta as { enrollEpoch?: number } | null)?.enrollEpoch ?? 1;
+    // FIX review-epoch #4 (LỖI 4 — sweeper bỏ sót do event cũ): check enqueuedExists phải
+    // LỌC theo ĐÚNG sequenceId + enrollEpoch của event này. Trước đây chỉ match (trigger,
+    // contact, "step N+1/") → event step N+1 của LẦN GẮN CŨ (e1) làm sweeper tưởng đã xếp →
+    // bỏ qua → luồng mới (e2) đứng im. Giờ so metadata.sequenceId + enrollEpoch khớp mới skip.
+    const enqueuedCandidates = await prisma.automationEventLog.findMany({
+      where: {
+        triggerId: evt.triggerId,
+        contactId: evt.contactId,
+        eventType: 'sequence_step_enqueued',
+        detail: { contains: `step ${nextStepIdx}/` },
+      },
+      select: { metadata: true },
+      orderBy: { createdAt: 'desc' }, // CLAIM 1-sweeper: mới nhất trước — epoch hiện tại không bị take:20 phân trang loại
+      take: 20,
+    });
+    const alreadyEnqueued = enqueuedCandidates.some((e) => {
+      const m = e.metadata as { sequenceId?: string; enrollEpoch?: number } | null;
+      const mSeq = m?.sequenceId ?? sequenceId; // data cũ thiếu meta → coi cùng sequence
+      const mEpoch = m?.enrollEpoch ?? 1;
+      return mSeq === sequenceId && mEpoch === evtEpoch;
+    });
+    if (alreadyEnqueued) continue;
+
+    // Sweeper recovery: enqueue step N+1 với jobId dedup (đúng sequenceId + epoch của event).
+    const queue = getSequenceStepQueue();
     const nextJobId = buildSequenceStepJobId(evt.triggerId, sequenceId, evt.contactId, nextStepIdx, evtEpoch);
     const existingJob = await queue.getJob(nextJobId);
     if (existingJob) {
@@ -882,6 +907,8 @@ export async function sweepMissingNextSteps(): Promise<{ recovered: number }> {
           totalSteps: steps.length,
           jobId: nextJobId,
           source: 'sweeper_recovery',
+          sequenceId, // LỖI 4 self-consistency: vòng sweeper sau đọc lại event này phải biết đúng luồng
+          enrollEpoch: evtEpoch, // ...và đúng epoch, nếu không fallback ?? 1 sẽ lệch với epoch>1
         },
       },
     });

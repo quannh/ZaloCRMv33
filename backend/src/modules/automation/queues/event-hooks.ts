@@ -34,6 +34,7 @@ import { enqueueSequenceStart } from './sequence-step-worker.js';
 import {
   enrollFromTrigger,
   closeCareSessionsForContact,
+  resolveNextEnrollEpoch,
 } from '../care-session/care-session-service.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -383,6 +384,12 @@ export async function onFriendAccepted(input: {
   // (jobId dedup: luồng stranger drainer đã enroll thì no-op) → mark enqueued.
   // Phiên tạo NGAY cả khi không có sequence (vẫn cần lắng nghe event khách).
   const sequenceId = trigger.successorSequenceId ?? trigger.sequenceId;
+  // LỖI A (review-epoch 2026-06-15): re-accept (unfriend→kết bạn lại) cho KH đã chạy xong
+  // cùng luồng <24h → bump epoch để jobId không đụng job cũ còn trong removeOnComplete window.
+  // Lần đầu (chưa phiên) → 1. Path này KHÔNG có probe-dedup epoch=1 nên bump an toàn.
+  const acceptEpoch = sequenceId
+    ? await resolveNextEnrollEpoch(orgId, contactId, sequenceId)
+    : undefined;
   if (nick?.ownerUserId) {
     await enrollFromTrigger({
       orgId,
@@ -392,6 +399,7 @@ export async function onFriendAccepted(input: {
       ownerUserId: nick.ownerUserId,
       sequenceId: sequenceId ?? null,
       sequenceStartDelayMinutes: trigger.sequenceStartDelayMinutes,
+      enrollEpoch: acceptEpoch,
       // closeConditions đọc từ ORG (cấu hình lắng nghe chung) — không truyền per-trigger.
     });
   } else if (sequenceId) {
@@ -402,6 +410,7 @@ export async function onFriendAccepted(input: {
       sequenceId,
       nickId,
       orgId,
+      enrollEpoch: acceptEpoch,
       startDelayMinutes: trigger.sequenceStartDelayMinutes,
     });
   }

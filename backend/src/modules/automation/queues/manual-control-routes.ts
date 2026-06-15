@@ -524,6 +524,17 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
         reply.code(404);
         return { error: 'Nick Zalo không tồn tại hoặc chưa kết nối' };
       }
+      // FIX review-epoch (CLAIM 1): nick KHÔNG có chủ (ownerUserId null) → KHÔNG cho gắn.
+      // Trước đây phiên chăm sóc chỉ tạo trong `if (nick.ownerUserId)`, nhưng job step 0
+      // vẫn enqueue vô điều kiện → bám đuổi gửi mà KHÔNG có phiên (vô chủ: không pause khi
+      // KH reply, không cooldown, không hiện ở /care-sessions). Chặn sớm, báo sale chọn nick khác.
+      if (!nick.ownerUserId) {
+        reply.code(422);
+        return {
+          error: 'nick_no_owner',
+          detail: 'Nick Zalo này chưa được gán cho sale nào — không thể bám đuổi. Vào Quản lý nick để gán phụ trách, hoặc chọn nick khác.',
+        };
+      }
       if (!contact) {
         reply.code(404);
         return { error: 'Khách hàng không tồn tại' };
@@ -581,16 +592,22 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
       // không đụng job cũ đã completed (BullMQ dedup không nuốt). epoch = (số phiên cũ của
       // contact+sequence) + 1. Đồng thời ĐÓNG phiên cũ active (nếu có) → tạo phiên mới sạch,
       // tránh "reuse existing session" giữ epoch cũ.
-      const priorCount = await prisma.careSession.count({
-        where: { orgId, contactId: cid, sourceSequenceId: sequence.id },
-      });
-      const enrollEpoch = priorCount + 1;
+      // FIX review-epoch (CLAIM 2): epoch = MAX(enrollEpoch cũ) + 1 (helper dùng chung với
+      // auto-path materializer). KHÔNG dùng count+1 vì count không monotonic — xem
+      // resolveNextEnrollEpoch. Phiên fail giữa chừng vẫn không tái dùng epoch cũ.
+      const { resolveNextEnrollEpoch } = await import('../care-session/care-session-service.js');
+      const enrollEpoch = await resolveNextEnrollEpoch(orgId, cid, sequence.id);
       if (enrollEpoch > 1) {
-        // Đóng phiên cũ active.
+        // Đóng phiên cũ active + (FIX review-epoch #2 — LỖI 2) CLEAR pausedAtStepIdx của MỌI
+        // phiên cũ (kể cả đã closed janitor_silence) → resume cron KHÔNG hồi sinh chain epoch cũ.
         await prisma.careSession.updateMany({
           where: { orgId, contactId: cid, sourceSequenceId: sequence.id, state: 'active' },
           data: { state: 'closed', closedReason: 'reenrolled', closedAt: new Date(), pausedAtStepIdx: null },
         }).catch((e) => logger.warn(`[manual-enroll] đóng phiên cũ lỗi: ${(e as Error).message}`));
+        await prisma.careSession.updateMany({
+          where: { orgId, contactId: cid, sourceSequenceId: sequence.id, pausedAtStepIdx: { not: null } },
+          data: { pausedAtStepIdx: null }, // clear marker phiên cũ đã đóng → resume bỏ qua
+        }).catch((e) => logger.warn(`[manual-enroll] clear pausedAtStepIdx cũ lỗi: ${(e as Error).message}`));
         // FIX review #2 (HIGH): DỌN job epoch cũ còn trong queue. Không dọn → job mồ côi tới
         // hạn vẫn gửi (worker không check phiên đã đóng) → tin ma song song chain mới.
         try {
@@ -608,7 +625,44 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
         }
       }
 
-      // Qua cooldown → enqueue step 0 (epoch mới) + tạo phiên chăm sóc mới.
+      // FIX review-epoch #6 (LỖI 6 — thứ tự): TẠO PHIÊN TRƯỚC, ENQUEUE SAU.
+      // Job step 0 dưới đây có startDelayMinutes:0 → worker nhặt + chạy NGAY. Nếu enqueue
+      // trước khi phiên epoch mới tồn tại, worker chạy lúc phiên active vẫn là phiên cũ
+      // chưa đóng kịp / chưa có phiên mới → các guard dựa trên CareSession (epoch, pause,
+      // cooldown) đọc sai trạng thái. Đảo thứ tự: phiên epoch mới commit xong mới enqueue.
+      // (enrollFromTrigger TỰ snapshot rulesSnapshot + double-check cooldown — Codex #10.)
+      // nick.ownerUserId đã chắc chắn không null (chặn ở trên — CLAIM 1).
+      let sessionCreated = false;
+      try {
+        const { enrollFromTrigger } = await import('../care-session/care-session-service.js');
+        const sessionId = await enrollFromTrigger({
+          orgId,
+          triggerId: systemTrigger.id,
+          contactId: cid,
+          nickId: nick.id,
+          ownerUserId: nick.ownerUserId,
+          sequenceId: sequence.id,
+          skipEnqueue: true, // step 0 enqueue NGAY dưới đây (sau khi phiên đã commit)
+          enrolledByUserId: userId, // sale gắn tay
+          enrollEpoch,
+        });
+        sessionCreated = !!sessionId; // null = cooldown chặn (double-check) → KHÔNG enqueue mù
+      } catch (err) {
+        logger.warn(`[manual-enroll] care-session enroll failed contact=${cid}: ${(err as Error).message}`);
+      }
+
+      // FIX review-epoch (CLAIM 1+2): CHỈ enqueue khi phiên epoch mới đã commit. enrollFromTrigger
+      // trả null = cooldown double-check chặn → nếu vẫn enqueue thì job gửi mà cooldown bị bỏ qua
+      // + không có phiên theo dõi. Phiên fail/null → báo sale, KHÔNG gửi.
+      if (!sessionCreated) {
+        reply.code(409);
+        return {
+          error: 'enroll_failed',
+          detail: 'Không tạo được phiên bám đuổi (có thể vừa qua kiểm tra chống làm phiền). Thử lại sau giây lát.',
+        };
+      }
+
+      // Qua cooldown + phiên epoch mới đã commit → enqueue step 0 (epoch mới). Manual = gửi ngay.
       await enqueueSequenceStart({
         triggerId: systemTrigger.id,
         contactId: cid,
@@ -618,30 +672,6 @@ export async function registerManualControlRoutes(app: FastifyInstance): Promise
         startDelayMinutes: 0, // Manual = gửi ngay
         enrollEpoch,
       });
-
-      // CareSession 2026-06-07 (anh chốt): bám đuổi THỦ CÔNG cũng sinh phiên → hiện ở
-      // /marketing/care-sessions, reply của KH tự vào phiên + báo sale. skipEnqueue=true
-      // vì đã enqueue STEP 0 ở trên. Phiên lắng nghe tiếp sau khi gửi hết, tự đóng khi
-      // KH im lặng N ngày (giống mọi phiên). enrolledByUserId = sale gắn tay.
-      // (enrollFromTrigger TỰ snapshot rulesSnapshot + double-check cooldown — Codex #10.)
-      if (nick.ownerUserId) {
-        try {
-          const { enrollFromTrigger } = await import('../care-session/care-session-service.js');
-          await enrollFromTrigger({
-            orgId,
-            triggerId: systemTrigger.id,
-            contactId: cid,
-            nickId: nick.id,
-            ownerUserId: nick.ownerUserId,
-            sequenceId: sequence.id,
-            skipEnqueue: true,
-            enrolledByUserId: userId, // sale gắn tay
-            enrollEpoch,
-          });
-        } catch (err) {
-          logger.warn(`[manual-enroll] care-session enroll failed (non-fatal) contact=${cid}: ${(err as Error).message}`);
-        }
-      }
 
       // Log enrollment event
       await prisma.automationEventLog.create({
