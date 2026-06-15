@@ -119,7 +119,7 @@
         <div class="qlp-table-wrap">
           <div class="qlp-table-toolbar">
             <input type="text" v-model="search" placeholder="🔍 Tìm theo tên KH, SĐT, tên tệp..." />
-            <span class="hint">📋 Sort: <b>Priority Score</b> giảm dần · <b>Top 10</b> nền vàng = sale tiếp theo có thể nhận</span>
+            <span class="hint">📋 Sort: <b>Vòng tua FIFO</b> · lead chưa chia/chia lâu nhất lên đầu · <b>Top 10</b> nền vàng = chia tiếp theo</span>
             <div class="spacer"></div>
             <span class="hint">Hiển thị <b>{{ filteredItems.length }}</b> / <b>{{ items.length }}</b> dòng</span>
           </div>
@@ -136,7 +136,7 @@
               <thead>
                 <tr>
                   <th class="c-rank">#</th>
-                  <th class="c-score">Score</th>
+                  <th class="c-score">Đã chia</th>
                   <th class="c-customer">Khách hàng</th>
                   <th class="c-phone">SĐT</th>
                   <th class="c-source">Nguồn</th>
@@ -160,8 +160,8 @@
                     </div>
                   </td>
                   <td class="c-score">
-                    <span class="score-chip" :class="scoreClass(item.priorityScore, item.status)">
-                      {{ item.status === 'cooldown' ? '🔒' : item.priorityScore }}
+                    <span class="score-chip" :class="roundChipClass(item.pooledCount)">
+                      {{ (item.pooledCount ?? 0) === 0 ? 'Chưa chia' : `Lần ${item.pooledCount}` }}
                     </span>
                   </td>
                   <td class="c-customer">
@@ -289,6 +289,8 @@ interface TodayStats {
 interface LeadItem {
   contactId: string;
   priorityScore: number;
+  pooledCount?: number; // Phase FIFO — số lần đã chia qua pool.
+  contactStatus?: { name: string; color: string | null } | null; // trạng thái KH (Status).
   source: 'forgotten' | 'customer_list' | 'external_sync';
   customerListName: string | null;
   name: string;
@@ -420,13 +422,14 @@ function formatPhone(p: string | null) {
   return p;
 }
 
-function scoreClass(score: number, status: string) {
-  if (status === 'cooldown') return 'score-cooldown';
-  if (score >= 70) return 'score-high';
-  if (score >= 50) return 'score-mid';
+// Phase Lead Pool FIFO 2026-06-15 — badge "Đã chia" theo số vòng (pooledCount).
+function roundChipClass(n: number | undefined) {
+  const c = n ?? 0;
+  if (c === 0) return 'score-high';   // chưa chia = xanh (ưu tiên đầu vòng)
+  if (c >= 5) return 'score-cooldown'; // kẹt đáy = đỏ
+  if (c >= 2) return 'score-mid';
   return 'score-low';
 }
-
 function sourceIcon(s: string) { return ({ forgotten: '💤', customer_list: '📂', external_sync: '🔄' } as Record<string, string>)[s] ?? '📥'; }
 function sourceLabel(s: string) { return ({ forgotten: 'Lãng quên', customer_list: 'Tệp KH', external_sync: 'Sync' } as Record<string, string>)[s] ?? s; }
 

@@ -183,12 +183,12 @@
           Tối đa 10 câu, mỗi câu ≤ 500 ký tự. Để trống hết → hệ thống dùng 3 câu mặc định.
         </p>
         <div class="lpc-placeholder-box">
-          <div class="lpc-placeholder-title">📌 Placeholder được hỗ trợ:</div>
+          <div class="lpc-placeholder-title">📌 8 biến cá nhân hóa (dùng chung với Mẫu tin nhắn):</div>
           <ul class="lpc-placeholder-list">
-            <li><code>{anh_chi}</code> → <b>Anh</b> / <b>Chị</b> / <b>Anh/Chị</b> (đầu câu, viết hoa)</li>
-            <li><code>{ac}</code> → <b>anh</b> / <b>chị</b> / <b>anh/chị</b> (giữa câu, viết thường)</li>
-            <li><code>{ten_kh}</code> → Tên riêng KH (Vd: "Tran" cho "Tram Tran")</li>
-            <li><code>{ten_em}</code> → Tên riêng của em sale (Vd: "Thành" cho "Phạm Chí Thành")</li>
+            <li><code>{gender}</code> → <b>Anh</b> / <b>Chị</b> (theo giới tính Zalo)</li>
+            <li><code>{name}</code> / <code>{name_full}</code> → Tên riêng / tên đầy đủ KH</li>
+            <li><code>{crm_first}</code> / <code>{crm_last}</code> / <code>{crm_full}</code> → Tên gợi nhớ per-nick (Friend, đồng bộ Zalo)</li>
+            <li><code>{sale}</code> / <code>{sale_full}</code> → Tên riêng / đầy đủ của sale</li>
           </ul>
         </div>
         <div class="lpc-template-list">
@@ -199,7 +199,7 @@
               rows="3"
               maxlength="500"
               class="lpc-template-textarea"
-              placeholder="Vd: Chào {anh_chi} {ten_kh}, em {ten_em} đây ạ. {ac} còn quan tâm dự án không?"
+              placeholder="Vd: Chào {gender} {crm_first}, em {sale} đây ạ. {gender} còn quan tâm dự án không?"
               @blur="onSaveTemplates"
             />
             <button type="button" class="lpc-template-del" :title="'Xoá câu ' + (idx + 1)" @click="removeTemplate(idx)">✕</button>
