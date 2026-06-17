@@ -70,16 +70,18 @@ async function getTaskProgressForTrigger(
     const prefix = `${triggerId}-`;
     for (const job of jobs) {
       if (!job.id || !job.id.startsWith(prefix)) continue;
-      // Parse `${triggerId}-${contactId}-${stepIdx}` — triggerId là UUID có dash,
-      // contactId cũng UUID có dash → KHÔNG split('-'). Strip prefix rồi tách
-      // stepIdx ở cuối (digits sau dash cuối).
-      const rest = job.id.slice(prefix.length);
-      const lastDash = rest.lastIndexOf('-');
-      if (lastDash < 1) continue;
-      const contactId = rest.slice(0, lastDash);
-      const stepIdxStr = rest.slice(lastDash + 1);
-      const stepIdx = parseInt(stepIdxStr, 10);
-      if (!Number.isFinite(stepIdx) || !contactId) continue;
+      // FIX 2026-06-17: jobId đổi từ 2026-06-13 sang
+      //   `${triggerId}-${sequenceId}-${contactId}-e${epoch}-${stepIdx}` (queue-registry buildSequenceStepJobId).
+      // Parser CŨ tách `${triggerId}-${contactId}-${stepIdx}` → lấy NHẦM
+      // contactId = `${sequenceId}-${contactId}-e${epoch}` → không khớp KH nào →
+      // dashboard hiện "0/16" + "Đã xong"/"—" oan cho MỌI KH đang chạy (cả 3 cột sai).
+      // Tách từ ĐUÔI `-e<epoch>-<stepIdx>`; contactId = UUID 36 ký tự ngay trước "-e".
+      const tail = job.id.match(/-e\d+-(\d+)$/);
+      if (!tail || tail.index === undefined) continue; // jobId format lạ/cũ → bỏ
+      const stepIdx = parseInt(tail[1], 10);
+      const head = job.id.slice(0, tail.index); // `${triggerId}-${sequenceId}-${contactId}`
+      const contactId = head.slice(-36); // contactId là UUID 36 ký tự cuối head
+      if (!Number.isFinite(stepIdx) || !/^[0-9a-f-]{36}$/i.test(contactId)) continue;
 
       // job.timestamp = ms epoch khi enqueue; job.opts.delay = ms delay.
       // nextRunAt = timestamp + delay (cho delayed jobs). active/waiting → now-ish.
