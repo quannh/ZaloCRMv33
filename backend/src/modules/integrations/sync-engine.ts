@@ -6,7 +6,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { syncGoogleSheets } from './providers/google-sheets.js';
 import { sendTelegramNotification } from './providers/telegram-bot.js';
-import { importFacebookLeads } from './providers/facebook.js';
+import { importFacebookLeads } from '../../shared/ee-registry/integrations.js';
 import { triggerZapierWebhook } from './providers/zapier-webhook.js';
 
 interface Integration {
