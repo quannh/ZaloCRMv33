@@ -48,6 +48,14 @@
           ({{ privacyCounter.used }}/{{ privacyCounter.max }})
         </span>
       </button>
+      <!-- T13 2026-06-21: tab "Nick đã xóa" — xem/khôi phục/dọn nick đã ẩn. -->
+      <button
+        class="za-tab"
+        :class="{ active: activeTab === 'archived' }"
+        @click="setTab('archived')"
+      >
+        🗑 Nick đã xóa
+      </button>
       <!-- GỠ 2026-06-10 (CEO-review): tab "Sửa nick nhận thông báo" (setup thủ công)
            đã bỏ — gây bug gửi nhầm UID. Nick nhận giờ chỉ đến từ luồng tạo user bằng SĐT
            + Check Live ở trang Thông báo hệ thống. Ẩn nút, không cho vào tab. -->
@@ -175,6 +183,11 @@
       </div>
     </template>
 
+    <!-- T13 2026-06-21: tab Nick đã xóa -->
+    <template v-else-if="activeTab === 'archived'">
+      <ArchivedNicksPanel @changed="refreshAll" />
+    </template>
+
     <!-- DETAIL DRAWER -->
     <AccountDetailDrawer
       v-model="drawerOpen"
@@ -252,6 +265,7 @@ import StatsCards from '@/components/zalo-accounts/StatsCards.vue';
 import AccountsTable from '@/components/zalo-accounts/AccountsTable.vue';
 // SdkLimitsDialog dời sang trang Cài đặt SdkLimitsSettingsPage (2026-06-18) — ko import ở đây nữa.
 import AccountDetailDrawer from '@/components/zalo-accounts/AccountDetailDrawer.vue';
+import ArchivedNicksPanel from '@/components/zalo-accounts/ArchivedNicksPanel.vue';
 import BulkActionBar from '@/components/zalo-accounts/BulkActionBar.vue';
 import OwnerReassignDrawer from '@/components/zalo-accounts/OwnerReassignDrawer.vue';
 import NickGridCards from '@/components/zalo-accounts/NickGridCards.vue';
@@ -346,7 +360,7 @@ const reconnectingIds = ref<Set<string>>(new Set());
 const canManageZalo = computed(() => authStore.canAccess('zalo_account', 'edit'));
 // GỠ 2026-06-10 (CEO-review): bỏ 'internal-contact' khỏi tab hợp lệ — URL hack
 // ?tab=internal-contact sẽ rơi về 'manage'. Cơ chế setup thủ công đã gỡ.
-type TabKey = 'manage' | 'privacy' | 'internal-contact';
+type TabKey = 'manage' | 'privacy' | 'internal-contact' | 'archived';
 // Community edition: 'privacy' not a valid tab → ?tab=privacy falls back to 'manage'.
 const VALID_TABS: TabKey[] = isExtension ? ['manage', 'privacy'] : ['manage'];
 const activeTab = ref<TabKey>(VALID_TABS.includes(route.query.tab as TabKey) ? (route.query.tab as TabKey) : 'manage');

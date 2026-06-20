@@ -372,6 +372,9 @@ model ZaloAccount {
   // dữ liệu (hội thoại/tin/bạn bè) trong DB. archivedAt != null = đã ẩn khỏi danh sách.
   // Listener + health-check BỎ QUA nick đã archive (không reconnect).
   archivedAt      DateTime? @map("archived_at")
+  // T13 (2026-06-21): user.id người bấm XÓA nick (null = hệ thống tự dọn thẻ ma / xóa trước khi
+  // có field này). Tab "Nick đã xóa" resolve tên qua User. KHÔNG FK (giữ nhẹ, xóa user ko cascade).
+  archivedById    String?   @map("archived_by_id")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   org                Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
