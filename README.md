@@ -1,10 +1,10 @@
-# ZaloCRM v3.3 — Quản lý nhiều tài khoản Zalo cá nhân
+# ZaloCRM v3.4 — Quản lý nhiều tài khoản Zalo cá nhân
 
-Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 giao diện web. Chat real-time, gửi ảnh/video/audio/file qua MinIO/S3/R2, Facebook Lead Ingestion, AI assistant, workflow tự động, tích hợp đa nền tảng, analytics nâng cao, PWA mobile.
+Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 giao diện web. Chat real-time, gửi ảnh/video/audio/file qua MinIO/S3/R2, cầu **Zalo ↔ Telegram** 2 chiều, luồng bám đuổi tự động (follow-up sequence), bể lead, Facebook Lead Ingestion, AI assistant, tích hợp đa nền tảng, analytics nâng cao, PWA mobile.
 
-**GitHub:** [https://github.com/locphamnguyen/ZaloCRM](https://github.com/locphamnguyen/ZaloCRM)
+**Mã nguồn mở:** [github.com/locphamnguyen/ZaloCRM](https://github.com/locphamnguyen/ZaloCRM) — phát hành theo **AGPL-3.0** (dual-license thương mại).
 
-## Ảnh chụp giao diện v3.3
+## Ảnh chụp giao diện
 
 | Dashboard | Facebook Lead |
 |---|---|
@@ -19,9 +19,18 @@ Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 
 | ![Privacy PIN](docs/release-images/v3.3/04-privacy-pin.png) | ![Customer Lists](docs/release-images/v3.3/06-customer-lists.png) |
 
 > 📖 Xem hướng dẫn sử dụng đầy đủ tại [docs/HUONG-DAN-NGUOI-DUNG.md](docs/HUONG-DAN-NGUOI-DUNG.md).
-> 📣 Release note v3.3: [docs/announcements/v3.3-release-announcement.md](docs/announcements/v3.3-release-announcement.md). Changelog đầy đủ: [CHANGELOG.md](CHANGELOG.md).
+> 📣 Changelog đầy đủ (mọi phiên bản): [CHANGELOG.md](CHANGELOG.md).
 
 ## Tính năng
+
+### Mới trong v3.4
+- **Cầu Zalo ↔ Telegram** — Mirror tin nhắn **2 chiều** (vào/ra) giữa Zalo và Telegram, kèm **media** (ảnh/video/audio/file, giữ tên file gốc), realtime + badge chống lặp
+- **Luồng bám đuổi (follow-up sequence) — recode toàn bộ** — 4 luật (giãn cách random + **jitter** từng bước, cooldown, pause/guard/resume), **Luật 4** tự giữ/hoãn theo giờ cấu hình khi khách trả lời, ETA timing 4 mốc, nút "gửi bước tiếp ngay"
+- **Bể Lead (lead-pool) — rebuild** — chia lead round-robin + 2 ca làm việc + 4 màn quản trị + tab "Tổng quan v2" (phân tích sale, lọc lead rác)
+- **Chuông "đang theo dõi"** sau tên khách trong chat + **Phạm vi làm việc** (scope thành điều kiện load hội thoại)
+- **AI** — quản lý API key + model provider per-org ngay trên giao diện
+- **Public REST API** (X-API-Key) + tài liệu API (vi/en) + Postman collection
+- **Mã nguồn mở AGPL-3.0** — relicense sang AGPL-3.0 (copyleft + §13 SaaS), dual-license thương mại, kèm CONTRIBUTING + DCO
 
 ### Mới trong v3.3
 - **Facebook Lead Ingestion** — Kết nối Meta OAuth/page, webhook verify + HMAC, queue lead, tự khám phá form và tự tạo Customer List theo page/form
