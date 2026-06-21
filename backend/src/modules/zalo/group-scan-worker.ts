@@ -119,6 +119,7 @@ async function scanOneGroup(
   const gridInfo = (info as { gridInfoMap?: Record<string, unknown> })?.gridInfoMap?.[groupId] as
     | {
         memberIds?: string[];
+        memVerList?: string[]; // ["<uid>_<version>", ...] — nguồn roster THẬT của zca-js
         adminIds?: string[];
         creatorId?: string;
         currentMems?: Array<{ id: string; dName?: string; zaloName?: string; avatar?: string }>;
@@ -131,7 +132,21 @@ async function scanOneGroup(
     throw new Error(`getGroupInfo returned no gridInfoMap entry for ${groupId}`);
   }
 
-  let memberIds = Array.isArray(gridInfo.memberIds) ? [...gridInfo.memberIds] : [];
+  // FIX (test server thật 2026-06-22): zca-js getGroupInfo trả `memberIds` RỖNG;
+  // roster THẬT nằm ở `memVerList` (mỗi phần tử "<uid>_<version>"). `currentMems`
+  // cũng thường rỗng. Lấy uid = phần trước dấu '_' đầu (uid là số, không chứa '_').
+  // Gộp cả 3 nguồn cho chắc, dedup ở dưới.
+  const memFromVer = (Array.isArray(gridInfo.memVerList) ? gridInfo.memVerList : [])
+    .map((e) => String(e).split('_')[0])
+    .filter((id) => id.length > 0);
+  const memFromCurrent = (Array.isArray(gridInfo.currentMems) ? gridInfo.currentMems : [])
+    .map((m) => m?.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  let memberIds = [
+    ...(Array.isArray(gridInfo.memberIds) ? gridInfo.memberIds : []),
+    ...memFromVer,
+    ...memFromCurrent,
+  ];
   const adminIds = new Set<string>([
     ...(Array.isArray(gridInfo.adminIds) ? gridInfo.adminIds : []),
     ...(gridInfo.creatorId ? [gridInfo.creatorId] : []),

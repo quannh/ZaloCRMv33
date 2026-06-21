@@ -44,6 +44,7 @@ function groupInfo(
     creatorId?: string;
     totalMember?: number;
     hasMoreMember?: number;
+    memVerList?: string[];
     currentMems?: Array<{ id: string; dName?: string; zaloName?: string; avatar?: string }>;
   },
 ) {
@@ -51,6 +52,7 @@ function groupInfo(
     gridInfoMap: {
       [groupId]: {
         memberIds: opts.memberIds,
+        memVerList: opts.memVerList,
         adminIds: opts.adminIds ?? [],
         creatorId: opts.creatorId,
         totalMember: opts.totalMember ?? opts.memberIds.length,
@@ -194,6 +196,33 @@ describe('processGroupScan — isFriend from Friend(accepted)', () => {
     }
     expect(byUid.friendUid).toBe(true);
     expect(byUid.strangerUid).toBe(false);
+  });
+});
+
+// ── Regression (test server thật) — roster nằm ở memVerList, memberIds rỗng ──
+describe('processGroupScan — members from memVerList (real zca-js shape)', () => {
+  it('extracts uid from memVerList when memberIds + currentMems are empty → completed', async () => {
+    prismaMock.groupScan.findUnique.mockResolvedValueOnce(scanRecord({ groupIds: ['gA'] }));
+    // zca-js thật: memberIds=[], currentMems=[], roster ở memVerList "<uid>_<ver>".
+    zaloOpsMock.getGroupInfo.mockResolvedValueOnce(
+      groupInfo('gA', {
+        memberIds: [],
+        currentMems: [],
+        memVerList: ['111_3', '222_5', '333_0'],
+        totalMember: 3,
+      }),
+    );
+
+    await processGroupScan('scan-1');
+
+    // 3 member upsert với uid đã tách '_version'.
+    expect(prismaMock.groupMember.upsert).toHaveBeenCalledTimes(3);
+    const uids = prismaMock.groupMember.upsert.mock.calls.map(
+      (c: any) => c[0].where.zaloAccountId_groupId_memberUid.memberUid,
+    );
+    expect(uids.sort()).toEqual(['111', '222', '333']);
+    // Đủ roster (3/3) → completed, không partial.
+    expect(lastScanUpdate()).toMatchObject({ state: 'completed' });
   });
 });
 
