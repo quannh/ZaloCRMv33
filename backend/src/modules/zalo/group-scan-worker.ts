@@ -75,7 +75,8 @@ export async function processGroupScan(scanId: string): Promise<void> {
         data: {
           resumeCursor: groupId,
           scannedGroups: { increment: 1 },
-          memberCount: { increment: added },
+          memberCount: { increment: added.members },
+          friendCount: { increment: added.friends },
         },
       });
     } catch (err) {
@@ -112,7 +113,7 @@ async function scanOneGroup(
   orgId: string,
   zaloAccountId: string,
   groupId: string,
-): Promise<number> {
+): Promise<{ members: number; friends: number }> {
   // ── 1. getGroupInfo → memberIds, totalMember, hasMoreMember, profiles inline ──
   const info = await zaloOps.getGroupInfo(zaloAccountId, groupId);
   const gridInfo = (info as { gridInfoMap?: Record<string, unknown> })?.gridInfoMap?.[groupId] as
@@ -167,17 +168,15 @@ async function scanOneGroup(
 
   const now = new Date();
   let upserted = 0;
+  let friendsFound = 0;
 
   for (const batch of chunk(memberIds, CHUNK_SIZE)) {
     // Enrich: member chưa có profile inline → getGroupMembersInfo (rate-limited).
     const missing = batch.filter((uid) => !profiles.has(uid));
     if (missing.length > 0) {
       try {
-        // zaloOps.getGroupMembersInfo(accountId, groupId) — wrapper community sẵn có.
-        // (zca-js factory nhận memberId[] để trả profiles theo uid; wrapper hiện
-        // truyền groupId. Dù shape khác nhau, ta đọc `profiles[uid]` an toàn: uid
-        // thiếu sẽ rơi về null-profile bên dưới — KHÔNG chặn upsert memberUid.)
-        const res = (await zaloOps.getGroupMembersInfo(zaloAccountId, groupId)) as {
+        // wrapper đã FIX nhận memberId[] → truyền đúng các uid thiếu profile để enrich.
+        const res = (await zaloOps.getGroupMembersInfo(zaloAccountId, missing)) as {
           profiles?: Record<string, { id?: string; displayName?: string; zaloName?: string; avatar?: string }>;
         };
         for (const [uid, p] of Object.entries(res?.profiles ?? {})) {
@@ -214,6 +213,7 @@ async function scanOneGroup(
     for (const uid of batch) {
       const prof = profiles.get(uid);
       const isFriend = friendSet.has(uid);
+      if (isFriend) friendsFound++;
       const data = {
         displayName: prof?.displayName ?? null,
         zaloName: prof?.zaloName ?? null,
@@ -241,5 +241,5 @@ async function scanOneGroup(
     );
   }
 
-  return upserted;
+  return { members: upserted, friends: friendsFound };
 }

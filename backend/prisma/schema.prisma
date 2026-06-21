@@ -1828,6 +1828,7 @@ model GroupScan {
   totalGroups   Int       @default(0) @map("total_groups")
   scannedGroups Int       @default(0) @map("scanned_groups")
   memberCount   Int       @default(0) @map("member_count")
+  friendCount   Int       @default(0) @map("friend_count") // số member là bạn (stat FE)
   resumeCursor  String?   @map("resume_cursor") // groupId xử lý cuối → resume
   error         String?
   startedAt     DateTime? @map("started_at")

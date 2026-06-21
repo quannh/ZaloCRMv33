@@ -34,6 +34,7 @@ CREATE TABLE "group_scans" (
     "total_groups" INTEGER NOT NULL DEFAULT 0,
     "scanned_groups" INTEGER NOT NULL DEFAULT 0,
     "member_count" INTEGER NOT NULL DEFAULT 0,
+    "friend_count" INTEGER NOT NULL DEFAULT 0,
     "resume_cursor" TEXT,
     "error" TEXT,
     "started_at" TIMESTAMP(3),
