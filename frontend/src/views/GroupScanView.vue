@@ -35,10 +35,10 @@
             <template #append>
               <v-chip
                 size="x-small"
-                :color="(item as any).raw?.status === 'connected' ? 'success' : 'error'"
+                :color="acctOnline(item) ? 'success' : 'error'"
                 variant="tonal"
               >
-                {{ (item as any).raw?.status === 'connected' ? 'Online' : 'Offline' }}
+                {{ acctOnline(item) ? 'Online' : 'Offline' }}
               </v-chip>
             </template>
           </v-list-item>
@@ -329,6 +329,13 @@ import { useSelectedAccount } from '@/composables/use-selected-account';
 import { useGroups, type GroupScanMember } from '@/composables/use-groups';
 
 const { accounts, selectedAccountId, selectAccount, loading: accountLoading } = useSelectedAccount();
+
+// Online = ưu tiên liveStatus (pool sống), fallback status (DB) — khớp logic chuẩn
+// app (NickGridCards / ZaloAccountsView). Dùng status DB đơn lẻ sai sau restart.
+function acctOnline(item: any): boolean {
+  const a = item?.raw ?? item;
+  return String(a?.liveStatus || a?.status || '').toLowerCase() === 'connected';
+}
 const {
   groups, loading,
   scan, scanMembers, scanLoading, scanMembersLoading,
