@@ -1,6 +1,6 @@
-# Hướng dẫn triển khai ZaloCRM lên Production (v3.4)
+# Hướng dẫn triển khai ZCRM lên Production (v3.4)
 
-> Runbook **tự chứa** cho ZaloCRM (mã nguồn mở, **AGPL-3.0**). Gồm 2 luồng: **cài mới từ đầu**
+> Runbook **tự chứa** cho ZCRM (mã nguồn mở, **AGPL-3.0**). Gồm 2 luồng: **cài mới từ đầu**
 > và **nâng cấp** bản đang chạy lên v3.4. Mọi thao tác **idempotent + giữ dữ liệu**.
 >
 > Thay `sub.domain.com` / `file.domain.com` bằng domain thật của bạn. Hướng dẫn sử dụng:
@@ -230,7 +230,7 @@ cat backup-truoc-nang-cap-*.sql | docker exec -i zalo-crm-db psql -U crmuser zal
 
 ## 7. Giấy phép — GPL-3.0
 
-ZaloCRM phát hành theo **GNU General Public License v3.0 (GPL-3.0)** — xem [LICENSE](../LICENSE).
+ZCRM phát hành theo **GNU General Public License v3.0 (GPL-3.0)** — xem [LICENSE](../LICENSE).
 Copyleft: mọi bản **phân phối lại** (kể cả bản đã chỉnh sửa) **bắt buộc** phát hành dưới GPL-3.0 và
 kèm **mã nguồn đầy đủ**. Muốn dùng theo điều khoản thương mại (không chịu ràng buộc copyleft) —
 dual-license: liên hệ `locnt@locnguyendata.com`.
