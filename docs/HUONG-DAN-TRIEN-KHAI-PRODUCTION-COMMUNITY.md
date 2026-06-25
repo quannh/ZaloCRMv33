@@ -4,14 +4,16 @@
 > và **nâng cấp** bản đang chạy lên v3.4. Mọi thao tác **idempotent + giữ dữ liệu**.
 >
 > Thay `sub.domain.com` / `file.domain.com` bằng domain thật của bạn. Hướng dẫn sử dụng:
-> [`HUONG-DAN-SU-DUNG.md`](../HUONG-DAN-SU-DUNG.md).
+> **https://docs.locnguyendata.com/**.
 
 ## 🚀 Quick Start — 1 lệnh (tự động)
+
+> **Mã nguồn (repo):** https://github.com/locphamnguyen/ZaloCRM
 
 Cài mới **hoặc** nâng cấp đều dùng chung 1 script — tự phát hiện, tự backup, không cần setup tay:
 
 ```bash
-git clone <repo-url> zalocrm && cd zalocrm
+git clone https://github.com/locphamnguyen/ZaloCRM.git zalocrm && cd zalocrm
 ./scripts/zalocrm-deploy.sh          # auto: cài mới nếu chưa có, nâng cấp nếu đã chạy
 ```
 
@@ -46,7 +48,7 @@ AI assistant (Anthropic/Gemini/OpenAI/Qwen/Kimi), analytics, PWA mobile + push.
 ## 2. Lấy source + tạo `.env`
 
 ```bash
-git clone <repo-url> zalocrm && cd zalocrm
+git clone https://github.com/locphamnguyen/ZaloCRM.git zalocrm && cd zalocrm
 cp .env.example .env
 ```
 
