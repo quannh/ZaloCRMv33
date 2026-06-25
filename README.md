@@ -14,7 +14,7 @@ Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 
 |---|---|
 | ![Chat media forward](docs/release-images/v3.3/07-chat-media-forward.png) | ![Privacy PIN](docs/release-images/v3.3/04-privacy-pin.png) |
 
-> 📖 Xem hướng dẫn sử dụng đầy đủ tại [docs/HUONG-DAN-NGUOI-DUNG.md](docs/HUONG-DAN-NGUOI-DUNG.md).
+> 📖 Hướng dẫn cài đặt & triển khai đầy đủ: [docs/HUONG-DAN-TRIEN-KHAI-PRODUCTION-COMMUNITY.md](docs/HUONG-DAN-TRIEN-KHAI-PRODUCTION-COMMUNITY.md).
 > 📣 Changelog đầy đủ (mọi phiên bản): [CHANGELOG.md](CHANGELOG.md).
 
 ## Tính năng
